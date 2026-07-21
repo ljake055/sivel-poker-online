@@ -562,6 +562,44 @@ function createAccountStore({ databaseUrl, production = false } = {}) {
     }
   }
 
+  async function topUpPlayer(playerToken, amount) {
+    amount = Math.floor(Number(amount));
+    if (!Number.isFinite(amount) || amount < 1 || amount > 10_000) throw new Error('Invalid top-up amount.');
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
+      const session = await client.query(
+        `SELECT * FROM table_sessions WHERE player_token = $1 FOR UPDATE`,
+        [playerToken]
+      );
+      if (!session.rowCount || session.rows[0].status !== 'active') throw new Error('This table seat is no longer active.');
+      const row = session.rows[0];
+      const wallet = await client.query('SELECT balance FROM wallets WHERE user_id = $1 FOR UPDATE', [row.user_id]);
+      if (!wallet.rowCount) throw new Error('Player wallet not found.');
+      const before = Number(wallet.rows[0].balance);
+      if (before < amount) throw new Error(`You need ${amount.toLocaleString()} Sivel Chips for that top-up.`);
+      const after = before - amount;
+      await client.query('UPDATE wallets SET balance = $2, updated_at = NOW() WHERE user_id = $1', [row.user_id, after]);
+      await client.query(
+        `UPDATE table_sessions SET buy_in = buy_in + $2, updated_at = NOW() WHERE id = $1`,
+        [row.id, amount]
+      );
+      await client.query(
+        `INSERT INTO wallet_transactions(user_id, amount, balance_before, balance_after, reason, table_id, room_code)
+         VALUES ($1, $2, $3, $4, 'table_top_up', $5, $6)`,
+        [row.user_id, -amount, before, after, row.table_id, row.room_code]
+      );
+      const account = await accountById(client, row.user_id);
+      await client.query('COMMIT');
+      return { amount, account };
+    } catch (err) {
+      await client.query('ROLLBACK');
+      throw err;
+    } finally {
+      client.release();
+    }
+  }
+
   async function refundPlayer(playerToken, reason = 'table_refund') {
     const client = await pool.connect();
     try {
@@ -1248,6 +1286,7 @@ function createAccountStore({ databaseUrl, production = false } = {}) {
     dailySpinStatus,
     claimDailySpin,
     reserveBuyIn,
+    topUpPlayer,
     refundPlayer,
     cashOutPlayer,
     refundTable,
