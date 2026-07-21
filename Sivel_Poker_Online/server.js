@@ -234,11 +234,13 @@ function clearTurnTimer(room) {
 function armTurnTimer(room) {
   clearTurnTimer(room);
   const game = room.game;
-  if (!game || game.handOver || game.currentActor == null) return;
+  if (!game || game.handOver || game.phase !== 'betting' || game.currentActor == null) return;
   game.turnDeadline = Date.now() + TURN_MS;
   const actor = game.currentActor;
+  const handId = game.handId;
+  const gameRef = game;
   game.turnTimer = setTimeout(() => {
-    if (!room.game || room.game.handOver || room.game.currentActor !== actor) return;
+    if (room.game !== gameRef || !room.game || room.game.handOver || room.game.phase !== 'betting' || room.game.handId !== handId || room.game.currentActor !== actor) return;
     const owed = amountToCall(room, actor);
     const player = room.players[actor];
     if (owed === 0) {
@@ -263,6 +265,8 @@ function startTable(room) {
   });
   room.game = {
     handNo: 0,
+    handId: 0,
+    phase: 'idle',
     dealerIndex: crypto.randomInt(room.players.length),
     sbIndex: null,
     bbIndex: null,
@@ -296,6 +300,9 @@ function startHand(room) {
   }
   if (game.handNo > 0) game.dealerIndex = nextLive(room, game.dealerIndex);
   game.handNo += 1;
+  game.handId += 1;
+  const handId = game.handId;
+  game.phase = 'dealing';
   game.deck = makeDeck();
   game.board = [];
   game.street = 'preflop';
@@ -305,6 +312,7 @@ function startHand(room) {
   game.currentActor = null;
   game.handOver = false;
   game.reveal = false;
+  game.phase = 'betting';
   game.result = null;
   game.turnDeadline = 0;
 
@@ -332,7 +340,7 @@ function startHand(room) {
   game.status = `Hand ${game.handNo} · ${room.players[game.currentActor].name} to act`;
   log(room, `Hand ${game.handNo} begins.`);
   broadcast(room);
-  if (actionable(room).length < 2) runoutAndShowdown(room);
+  if (actionable(room).length < 2) runoutAndShowdown(room, handId);
   else armTurnTimer(room);
 }
 
@@ -348,7 +356,7 @@ function roundComplete(room) {
 
 function action(room, playerToken, payload) {
   const game = room.game;
-  if (room.stage !== 'playing' || !game || game.handOver) throw new Error('There is no active hand.');
+  if (room.stage !== 'playing' || !game || game.handOver || game.phase !== 'betting') throw new Error('There is no active hand.');
   const index = room.players.findIndex(p => p.token === playerToken);
   if (index < 0) throw new Error('Player not found.');
   if (game.currentActor !== index) throw new Error('It is not your turn.');
@@ -413,12 +421,15 @@ function afterAction(room, index) {
 function finishBettingRound(room) {
   const game = room.game;
   clearTurnTimer(room);
+  const handId = game.handId;
+  if (game.phase !== 'betting' || game.handOver) return;
+  game.phase = 'resolving';
   if (game.street === 'river') {
-    showdown(room);
+    showdown(room, handId);
     return;
   }
   if (actionable(room).length < 2) {
-    runoutAndShowdown(room);
+    runoutAndShowdown(room, handId);
     return;
   }
   advanceStreet(room);
@@ -430,9 +441,10 @@ function finishBettingRound(room) {
   game.minRaise = room.options.bigBlind;
   game.currentActor = nextIndex(room, game.dealerIndex, p => p.inHand && !p.folded && !p.allIn);
   if (game.currentActor == null || actionable(room).length < 2) {
-    runoutAndShowdown(room);
+    runoutAndShowdown(room, handId);
     return;
   }
+  game.phase = 'betting';
   game.status = `${capitalize(game.street)} · ${room.players[game.currentActor].name} to act`;
   broadcast(room);
   armTurnTimer(room);
@@ -455,11 +467,13 @@ function advanceStreet(room) {
   }
 }
 
-function runoutAndShowdown(room) {
+function runoutAndShowdown(room, expectedHandId = room.game && room.game.handId) {
   const game = room.game;
+  if (!game || game.handOver || game.handId !== expectedHandId || !['betting', 'resolving', 'runout'].includes(game.phase)) return;
   clearTurnTimer(room);
+  game.phase = 'runout';
   while (game.street !== 'river') advanceStreet(room);
-  showdown(room);
+  showdown(room, expectedHandId);
 }
 
 function awardUncontested(room, winner) {
@@ -468,16 +482,20 @@ function awardUncontested(room, winner) {
   const amount = game.pot;
   game.pot = 0;
   game.handOver = true;
+  game.phase = 'complete';
   game.currentActor = null;
   game.status = `${winner.name} wins ${amount} uncontested.`;
-  game.result = { handNo: game.handNo, title: `${winner.name} wins`, detail: `${amount} chips · uncontested`, winners: [winner.seat] };
+  game.result = { handId: game.handId, handNo: game.handNo, title: `${winner.name} wins`, detail: `${amount} chips · uncontested`, winners: [winner.seat] };
   log(room, game.status);
   finishHand(room);
 }
 
-function showdown(room) {
+function showdown(room, expectedHandId = room.game && room.game.handId) {
   const game = room.game;
+  if (!game || game.handOver || game.handId !== expectedHandId) return;
+  if (game.street !== 'river' || game.board.length !== 5 || !['resolving', 'runout'].includes(game.phase)) return;
   clearTurnTimer(room);
+  game.phase = 'showdown';
   game.reveal = true;
   const pots = buildSidePots(room);
   const summaries = [];
@@ -501,9 +519,11 @@ function showdown(room) {
 
   game.pot = 0;
   game.handOver = true;
+  game.phase = 'complete';
   game.currentActor = null;
   game.status = summaries.join(' · ');
   game.result = {
+    handId: game.handId,
     handNo: game.handNo,
     title: allWinnerSeats.size === 1 ? `${room.players[[...allWinnerSeats][0]].name} wins` : 'Split pot',
     detail: summaries.join(' · '),
@@ -547,10 +567,11 @@ function finishTable(room) {
   const winner = live.length === 1 ? room.players[live[0]] : room.players.slice().sort((a, b) => b.chips - a.chips)[0];
   game.tableOver = true;
   game.handOver = true;
+  game.phase = 'complete';
   game.currentActor = null;
   game.reveal = true;
   game.status = `${winner.name} wins the table with ${winner.chips} chips.`;
-  game.result = { handNo: game.handNo, title: `${winner.name} wins the table`, detail: `${winner.chips} chips`, winners: [winner.seat], tableOver: true };
+  game.result = { handId: game.handId, handNo: game.handNo, title: `${winner.name} wins the table`, detail: `${winner.chips} chips`, winners: [winner.seat], tableOver: true };
   log(room, game.status);
   broadcast(room);
 }
@@ -622,7 +643,7 @@ function leaveRoom(room, playerToken) {
     player.connected = false;
     player.lastSeen = Date.now();
     log(room, `${player.name} disconnected and may rejoin.`);
-    if (room.game && !room.game.handOver && room.game.currentActor === player.seat) {
+    if (room.game && !room.game.handOver && room.game.phase === 'betting' && room.game.currentActor === player.seat) {
       clearTurnTimer(room);
       const owed = amountToCall(room, player.seat);
       if (owed === 0) player.acted = true;
@@ -638,7 +659,7 @@ function publicState(room, viewerToken) {
   const viewerIndex = room.players.findIndex(p => p.token === viewerToken);
   const game = room.game;
   const players = room.players.map((p, index) => {
-    const revealHole = game && game.reveal && p.inHand && !p.folded;
+    const revealHole = game && game.handOver && game.phase === 'complete' && game.reveal && p.inHand && !p.folded;
     const self = index === viewerIndex;
     return {
       seat: index,
@@ -655,7 +676,7 @@ function publicState(room, viewerToken) {
     };
   });
   let legal = { canAct: false, toCall: 0, canRaise: false, minRaiseTotal: 0, maxRaiseTotal: 0 };
-  if (game && !game.handOver && viewerIndex >= 0 && game.currentActor === viewerIndex) {
+  if (game && !game.handOver && game.phase === 'betting' && viewerIndex >= 0 && game.currentActor === viewerIndex) {
     const bounds = legalRaiseBounds(room, viewerIndex);
     legal = {
       canAct: true,
@@ -674,6 +695,8 @@ function publicState(room, viewerToken) {
     players,
     game: game ? {
       handNo: game.handNo,
+      handId: game.handId,
+      phase: game.phase,
       dealerIndex: game.dealerIndex,
       sbIndex: game.sbIndex,
       bbIndex: game.bbIndex,
@@ -685,7 +708,7 @@ function publicState(room, viewerToken) {
       handOver: game.handOver,
       tableOver: game.tableOver,
       status: game.status,
-      result: game.handOver && game.result && (game.result.tableOver || Number(game.result.handNo) === Number(game.handNo)) ? game.result : null,
+      result: game.handOver && game.phase === 'complete' && game.result && Number(game.result.handId) === Number(game.handId) && (game.result.tableOver || Number(game.result.handNo) === Number(game.handNo)) ? game.result : null,
       turnDeadline: game.turnDeadline
     } : null,
     legal,
@@ -818,7 +841,7 @@ async function handleApi(req, res, pathname, url) {
       return json(res, 200, { ok: true, publicUrl: `${proto}://${host}` });
     }
     if (req.method === 'GET' && pathname === '/api/health') {
-      return json(res, 200, { ok: true, rooms: rooms.size, now: Date.now() });
+      return json(res, 200, { ok: true, version: 'hand-state-fix-2', rooms: rooms.size, now: Date.now() });
     }
     if (req.method === 'GET' && pathname === '/api/events') {
       const room = getRoom(url.searchParams.get('room'));
