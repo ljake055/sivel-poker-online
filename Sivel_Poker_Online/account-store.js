@@ -12,6 +12,8 @@ const BIO_MAX_LENGTH = 280;
 const DM_MAX_LENGTH = 500;
 const AVATARS = new Set(['🕶️','🦊','🐺','🦁','🐉','👑','⚡','🎯','🃏','🤖','👻','🧙‍♂️','🦅','🔥','💎','🥷']);
 const ADMIN_USERNAME_KEYS = new Set(String(process.env.SIVEL_ADMIN_USERNAMES || 'csivel16').split(',').map(value => value.trim().toLowerCase()).filter(Boolean));
+const DAILY_SPIN_COOLDOWN_MS = 24 * 60 * 60 * 1000;
+const DAILY_SPIN_REWARDS = Object.freeze([100, 150, 200, 250, 300, 500, 750, 1500]);
 function roleForUsername(username) { return ADMIN_USERNAME_KEYS.has(String(username || '').trim().toLowerCase()) ? 'admin' : 'player'; }
 
 function cleanDisplayName(value, fallback = 'Player') {
@@ -135,6 +137,16 @@ function createAccountStore({ databaseUrl, production = false } = {}) {
       );
       CREATE INDEX IF NOT EXISTS wallet_transactions_user_created_idx
         ON wallet_transactions(user_id, created_at DESC);
+
+      CREATE TABLE IF NOT EXISTS daily_spins (
+        id BIGSERIAL PRIMARY KEY,
+        user_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        reward BIGINT NOT NULL CHECK (reward > 0),
+        segment_index SMALLINT NOT NULL CHECK (segment_index >= 0 AND segment_index < 8),
+        spun_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      );
+      CREATE INDEX IF NOT EXISTS daily_spins_user_time_idx
+        ON daily_spins(user_id, spun_at DESC);
 
       CREATE TABLE IF NOT EXISTS auth_sessions (
         token_hash CHAR(64) PRIMARY KEY,
@@ -269,15 +281,27 @@ function createAccountStore({ databaseUrl, production = false } = {}) {
               p.display_name, p.avatar, p.bio, p.xp, p.level,
               p.tables_played, p.tables_won, p.hands_played, p.hands_won,
               p.biggest_pot, p.achievements,
-              w.balance
+              w.balance,
+              ds.reward AS last_spin_reward,
+              ds.segment_index AS last_spin_segment_index,
+              ds.spun_at AS last_spin_at
        FROM users u
        JOIN player_profiles p ON p.user_id = u.id
        JOIN wallets w ON w.user_id = u.id
+       LEFT JOIN LATERAL (
+         SELECT reward, segment_index, spun_at
+         FROM daily_spins
+         WHERE user_id = u.id
+         ORDER BY spun_at DESC
+         LIMIT 1
+       ) ds ON TRUE
        WHERE u.id = $1`,
       [userId]
     );
     if (!result.rowCount) return null;
     const row = result.rows[0];
+    const lastSpinAt = row.last_spin_at ? new Date(row.last_spin_at).toISOString() : null;
+    const nextSpinAt = lastSpinAt ? new Date(new Date(lastSpinAt).getTime() + DAILY_SPIN_COOLDOWN_MS).toISOString() : null;
     return {
       id: Number(row.id),
       username: row.username,
@@ -295,6 +319,14 @@ function createAccountStore({ databaseUrl, production = false } = {}) {
       handsWon: Number(row.hands_won),
       biggestPot: Number(row.biggest_pot),
       achievements: row.achievements || {},
+      dailySpin: {
+        ready: !nextSpinAt || new Date(nextSpinAt).getTime() <= Date.now(),
+        lastSpinAt,
+        nextSpinAt,
+        lastReward: Number(row.last_spin_reward || 0),
+        lastSegmentIndex: row.last_spin_segment_index === null || row.last_spin_segment_index === undefined ? null : Number(row.last_spin_segment_index),
+        rewards: DAILY_SPIN_REWARDS
+      },
       createdAt: row.created_at
     };
   }
@@ -402,6 +434,99 @@ function createAccountStore({ databaseUrl, production = false } = {}) {
       [userId, display, safeAvatar, safeBio]
     );
     return accountById(pool, userId);
+  }
+
+  async function dailySpinStatus(userId) {
+    const result = await pool.query(
+      `SELECT ds.reward, ds.segment_index, ds.spun_at,
+              ds.spun_at + INTERVAL '24 hours' AS next_spin_at,
+              NOW() AS server_now
+       FROM daily_spins ds
+       WHERE ds.user_id = $1
+       ORDER BY ds.spun_at DESC
+       LIMIT 1`,
+      [userId]
+    );
+    if (!result.rowCount) {
+      const nowResult = await pool.query('SELECT NOW() AS server_now');
+      return {
+        ready: true,
+        lastSpinAt: null,
+        nextSpinAt: null,
+        lastReward: 0,
+        lastSegmentIndex: null,
+        rewards: DAILY_SPIN_REWARDS,
+        serverNow: nowResult.rows[0].server_now
+      };
+    }
+    const row = result.rows[0];
+    const nextMs = new Date(row.next_spin_at).getTime();
+    const nowMs = new Date(row.server_now).getTime();
+    return {
+      ready: nextMs <= nowMs,
+      lastSpinAt: new Date(row.spun_at).toISOString(),
+      nextSpinAt: new Date(row.next_spin_at).toISOString(),
+      lastReward: Number(row.reward),
+      lastSegmentIndex: Number(row.segment_index),
+      rewards: DAILY_SPIN_REWARDS,
+      serverNow: row.server_now
+    };
+  }
+
+  async function claimDailySpin(userId) {
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
+      const wallet = await client.query('SELECT balance FROM wallets WHERE user_id = $1 FOR UPDATE', [userId]);
+      if (!wallet.rowCount) throw new Error('Player wallet not found.');
+      const previous = await client.query(
+        `SELECT spun_at, spun_at + INTERVAL '24 hours' AS next_spin_at, NOW() AS server_now
+         FROM daily_spins
+         WHERE user_id = $1
+         ORDER BY spun_at DESC
+         LIMIT 1`,
+        [userId]
+      );
+      if (previous.rowCount) {
+        const row = previous.rows[0];
+        if (new Date(row.next_spin_at).getTime() > new Date(row.server_now).getTime()) {
+          const err = new Error('Your Daily Spin is still cooling down.');
+          err.code = 'DAILY_SPIN_COOLDOWN';
+          err.nextSpinAt = new Date(row.next_spin_at).toISOString();
+          throw err;
+        }
+      }
+      const segmentIndex = crypto.randomInt(DAILY_SPIN_REWARDS.length);
+      const reward = DAILY_SPIN_REWARDS[segmentIndex];
+      const before = Number(wallet.rows[0].balance);
+      const after = before + reward;
+      const spin = await client.query(
+        `INSERT INTO daily_spins(user_id, reward, segment_index)
+         VALUES ($1, $2, $3)
+         RETURNING id, spun_at, spun_at + INTERVAL '24 hours' AS next_spin_at`,
+        [userId, reward, segmentIndex]
+      );
+      await client.query('UPDATE wallets SET balance = $2, updated_at = NOW() WHERE user_id = $1', [userId, after]);
+      await client.query(
+        `INSERT INTO wallet_transactions(user_id, amount, balance_before, balance_after, reason)
+         VALUES ($1, $2, $3, $4, 'daily_spin_reward')`,
+        [userId, reward, before, after]
+      );
+      const account = await accountById(client, userId);
+      await client.query('COMMIT');
+      return {
+        reward,
+        segmentIndex,
+        spunAt: new Date(spin.rows[0].spun_at).toISOString(),
+        nextSpinAt: new Date(spin.rows[0].next_spin_at).toISOString(),
+        account
+      };
+    } catch (err) {
+      await client.query('ROLLBACK');
+      throw err;
+    } finally {
+      client.release();
+    }
   }
 
   async function reserveBuyIn({ userId, amount, tableId, roomCode, playerToken }) {
@@ -1120,6 +1245,8 @@ function createAccountStore({ databaseUrl, production = false } = {}) {
     requireAuth,
     logout,
     updateProfile,
+    dailySpinStatus,
+    claimDailySpin,
     reserveBuyIn,
     refundPlayer,
     cashOutPlayer,
