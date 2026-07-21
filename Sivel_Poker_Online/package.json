@@ -1,13 +1,16 @@
 {
   "name": "sivel-poker-online",
-  "version": "1.0.0",
+  "version": "2.0.0",
   "private": true,
-  "description": "Private browser-based Texas Hold'em rooms for 2-6 players.",
+  "description": "Sivel Poker with persistent accounts, server-sided bankrolls, private multiplayer rooms, and table chat.",
   "scripts": {
     "start": "node server.js",
-    "test": "node --check server.js"
+    "test": "node --check server.js && node --check account-store.js"
   },
   "engines": {
-    "node": ">=18"
+    "node": ">=20"
+  },
+  "dependencies": {
+    "pg": "^8.22.0"
   }
 }
