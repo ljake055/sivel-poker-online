@@ -15,6 +15,10 @@ const ROOM_IDLE_MS = 4 * 60 * 60 * 1000;
 const SUITS = ['♠', '♥', '♦', '♣'];
 const RANKS = [2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14];
 const ROOM_THEMES = new Set(['tropical', 'castle', 'penthouse', 'underground']);
+const PROFILE_AVATARS = new Set(['🕶️','🦊','🐺','🦁','🐉','👑','⚡','🎯','🃏','🤖','👻','🧙‍♂️','🦅','🔥','💎','🥷']);
+const CHAT_MAX_LENGTH = 220;
+const CHAT_MAX_MESSAGES = 80;
+const CHAT_RATE_MS = 750;
 
 
 function commonHeaders(extra = {}) {
@@ -62,6 +66,28 @@ function cleanName(value) {
   return String(value || '').trim().replace(/[^a-zA-Z0-9 _-]/g, '').slice(0, 18) || 'Player';
 }
 
+function cleanAvatar(value) {
+  const avatar = String(value || '').trim();
+  return PROFILE_AVATARS.has(avatar) ? avatar : '♠';
+}
+
+function cleanChatText(value) {
+  return String(value || '')
+    .replace(/[\u0000-\u001F\u007F\u202A-\u202E\u2066-\u2069]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .slice(0, CHAT_MAX_LENGTH);
+}
+
+function pushChat(room, message) {
+  room.chat.push({ id: crypto.randomUUID(), at: Date.now(), ...message });
+  room.chat = room.chat.slice(-CHAT_MAX_MESSAGES);
+}
+
+function systemChat(room, text) {
+  pushChat(room, { system: true, senderToken: '', name: 'Sivel Poker', avatar: '♠', text });
+}
+
 function roomCode() {
   const alphabet = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
   for (let attempt = 0; attempt < 1000; attempt++) {
@@ -81,7 +107,7 @@ function log(room, message) {
   room.log = room.log.slice(0, 40);
 }
 
-function createRoom(hostName, options = {}) {
+function createRoom(hostName, options = {}, hostAvatar) {
   const code = roomCode();
   const hostToken = token();
   const maxPlayers = clampInt(options.maxPlayers, 2, 6, 6);
@@ -103,18 +129,21 @@ function createRoom(hostName, options = {}) {
     players: [],
     clients: new Map(),
     game: null,
-    log: []
+    log: [],
+    chat: []
   };
-  room.players.push(makePlayer(hostToken, hostName, 0));
+  room.players.push(makePlayer(hostToken, hostName, 0, hostAvatar));
   rooms.set(code, room);
   log(room, `${cleanName(hostName)} created the room.`);
+  systemChat(room, `${cleanName(hostName)} opened the table chat.`);
   return { room, playerToken: hostToken };
 }
 
-function makePlayer(playerToken, name, seat) {
+function makePlayer(playerToken, name, seat, avatar) {
   return {
     token: playerToken,
     name: cleanName(name),
+    avatar: cleanAvatar(avatar),
     seat,
     connected: true,
     chips: 0,
@@ -125,7 +154,8 @@ function makePlayer(playerToken, name, seat) {
     inHand: false,
     streetBet: 0,
     totalBet: 0,
-    lastSeen: Date.now()
+    lastSeen: Date.now(),
+    lastChatAt: 0
   };
 }
 
@@ -606,23 +636,42 @@ function updateOptions(room, values) {
   broadcast(room);
 }
 
-function joinRoom(room, name, requestedToken) {
+function joinRoom(room, name, requestedToken, avatar) {
   let player = requestedToken ? getPlayer(room, requestedToken) : null;
   if (player) {
     player.connected = true;
     player.name = cleanName(name || player.name);
+    player.avatar = cleanAvatar(avatar || player.avatar);
     player.lastSeen = Date.now();
     log(room, `${player.name} reconnected.`);
+    systemChat(room, `${player.name} reconnected.`);
     return player.token;
   }
   if (room.stage !== 'lobby') throw new Error('This table has already started. Rejoin with the same browser instead.');
   if (room.players.length >= room.options.maxPlayers) throw new Error('This room is full.');
   const playerToken = token();
-  player = makePlayer(playerToken, name, room.players.length);
+  player = makePlayer(playerToken, name, room.players.length, avatar);
   room.players.push(player);
   log(room, `${player.name} joined the room.`);
+  systemChat(room, `${player.name} joined the table.`);
   broadcast(room);
   return playerToken;
+}
+
+function sendChatMessage(room, player, value) {
+  const text = cleanChatText(value);
+  if (!text) throw new Error('Type a message before sending.');
+  const now = Date.now();
+  if (now - (player.lastChatAt || 0) < CHAT_RATE_MS) throw new Error('Please wait a moment before sending another message.');
+  player.lastChatAt = now;
+  pushChat(room, {
+    system: false,
+    senderToken: player.token,
+    name: player.name,
+    avatar: cleanAvatar(player.avatar),
+    text
+  });
+  broadcast(room);
 }
 
 function leaveRoom(room, playerToken) {
@@ -634,6 +683,7 @@ function leaveRoom(room, playerToken) {
     room.players.forEach((p, i) => p.seat = i);
     room.clients.delete(playerToken);
     log(room, `${player.name} left the room.`);
+    systemChat(room, `${player.name} left the table.`);
     if (room.players.length === 0) {
       rooms.delete(room.code);
       return;
@@ -643,6 +693,7 @@ function leaveRoom(room, playerToken) {
     player.connected = false;
     player.lastSeen = Date.now();
     log(room, `${player.name} disconnected and may rejoin.`);
+    systemChat(room, `${player.name} disconnected.`);
     if (room.game && !room.game.handOver && room.game.phase === 'betting' && room.game.currentActor === player.seat) {
       clearTurnTimer(room);
       const owed = amountToCall(room, player.seat);
@@ -664,6 +715,7 @@ function publicState(room, viewerToken) {
     return {
       seat: index,
       name: p.name,
+      avatar: cleanAvatar(p.avatar),
       connected: p.connected,
       chips: p.chips,
       folded: p.folded,
@@ -712,6 +764,15 @@ function publicState(room, viewerToken) {
       turnDeadline: game.turnDeadline
     } : null,
     legal,
+    chat: room.chat.map(message => ({
+      id: message.id,
+      at: message.at,
+      name: message.name,
+      avatar: message.avatar,
+      text: message.text,
+      system: !!message.system,
+      isSelf: !!message.senderToken && message.senderToken === viewerToken
+    })),
     log: room.log
   };
 }
@@ -841,7 +902,7 @@ async function handleApi(req, res, pathname, url) {
       return json(res, 200, { ok: true, publicUrl: `${proto}://${host}` });
     }
     if (req.method === 'GET' && pathname === '/api/health') {
-      return json(res, 200, { ok: true, version: 'hand-state-fix-2', rooms: rooms.size, now: Date.now() });
+      return json(res, 200, { ok: true, version: 'multiplayer-chat-1', rooms: rooms.size, now: Date.now() });
     }
     if (req.method === 'GET' && pathname === '/api/events') {
       const room = getRoom(url.searchParams.get('room'));
@@ -875,14 +936,14 @@ async function handleApi(req, res, pathname, url) {
     const body = await readJson(req);
 
     if (pathname === '/api/create') {
-      const { room, playerToken } = createRoom(body.name, body.options || {});
+      const { room, playerToken } = createRoom(body.name, body.options || {}, body.avatar);
       broadcast(room);
       return json(res, 200, { room: room.code, token: playerToken, state: publicState(room, playerToken) });
     }
     if (pathname === '/api/join') {
       const room = getRoom(body.room);
       if (!room) throw new Error('Room not found. Check the four-character code.');
-      const playerToken = joinRoom(room, body.name, body.token);
+      const playerToken = joinRoom(room, body.name, body.token, body.avatar);
       touch(room, getPlayer(room, playerToken));
       return json(res, 200, { room: room.code, token: playerToken, state: publicState(room, playerToken) });
     }
@@ -893,6 +954,10 @@ async function handleApi(req, res, pathname, url) {
     if (!player) throw new Error('Player session not found. Rejoin the room.');
     touch(room, player);
 
+    if (pathname === '/api/chat') {
+      sendChatMessage(room, player, body.text);
+      return json(res, 200, { ok: true });
+    }
     if (pathname === '/api/options') {
       if (room.hostToken !== body.token) throw new Error('Only the host can change table options.');
       updateOptions(room, body.options || {});
