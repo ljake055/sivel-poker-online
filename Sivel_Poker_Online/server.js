@@ -29,7 +29,66 @@ const PUBLIC_TABLE_DEFINITIONS = Object.freeze([
 ]);
 const accounts = createAccountStore({ databaseUrl: process.env.DATABASE_URL, production: process.env.NODE_ENV === 'production' });
 const loginAttempts = new Map();
+const socialClients = new Map();
+const socialMessageTimes = new Map();
+const SOCIAL_MESSAGE_RATE_MS = 650;
 
+
+
+
+function socialSend(res, event, payload) {
+  res.write(`event: ${event}\n`);
+  res.write(`data: ${JSON.stringify(payload)}\n\n`);
+}
+
+function socialOnline(userId) {
+  const set = socialClients.get(Number(userId));
+  return !!(set && set.size);
+}
+
+function decorateSocialSnapshot(snapshot) {
+  if (!snapshot) return snapshot;
+  snapshot.friends = (snapshot.friends || []).map(friend => ({ ...friend, online: socialOnline(friend.id) }));
+  snapshot.incomingRequests = (snapshot.incomingRequests || []).map(request => ({ ...request, user: { ...request.user, online: socialOnline(request.user.id) } }));
+  snapshot.outgoingRequests = (snapshot.outgoingRequests || []).map(request => ({ ...request, user: { ...request.user, online: socialOnline(request.user.id) } }));
+  snapshot.blocked = (snapshot.blocked || []).map(user => ({ ...user, online: socialOnline(user.id) }));
+  snapshot.invites = (snapshot.invites || []).map(invite => ({ ...invite, inviter: { ...invite.inviter, online: socialOnline(invite.inviter.id) } }));
+  return snapshot;
+}
+
+async function socialSnapshotFor(userId) {
+  return decorateSocialSnapshot(await accounts.socialSnapshot(userId));
+}
+
+async function broadcastSocial(userIds) {
+  const unique = [...new Set((userIds || []).map(Number).filter(Boolean))];
+  await Promise.all(unique.map(async userId => {
+    const clients = socialClients.get(userId);
+    if (!clients || !clients.size) return;
+    try {
+      const snapshot = await socialSnapshotFor(userId);
+      for (const res of [...clients]) {
+        try { socialSend(res, 'snapshot', snapshot); }
+        catch (_) { clients.delete(res); }
+      }
+    } catch (err) {
+      console.error('Social broadcast failed:', err);
+    }
+  }));
+}
+
+async function broadcastPresence(userId) {
+  const ids = await accounts.friendIds(userId).catch(() => []);
+  ids.push(Number(userId));
+  await broadcastSocial(ids);
+}
+
+function checkSocialMessageRate(userId) {
+  const now = Date.now();
+  const last = socialMessageTimes.get(Number(userId)) || 0;
+  if (now - last < SOCIAL_MESSAGE_RATE_MS) throw new Error('Please wait a moment before sending another message.');
+  socialMessageTimes.set(Number(userId), now);
+}
 
 function commonHeaders(extra = {}) {
   return {
@@ -1264,7 +1323,7 @@ async function handleApi(req, res, pathname, url) {
     }
     if (req.method === 'GET' && pathname === '/api/health') {
       const database = await accounts.health();
-      return json(res, 200, { ok: true, version: 'public-tables-1', database: database.ok, rooms: rooms.size, publicTables: PUBLIC_TABLE_DEFINITIONS.length, now: Date.now() });
+      return json(res, 200, { ok: true, version: 'friends-system-1', database: database.ok, rooms: rooms.size, publicTables: PUBLIC_TABLE_DEFINITIONS.length, now: Date.now() });
     }
     if (req.method === 'GET' && pathname === '/api/public-tables') {
       ensurePublicTables();
@@ -1279,6 +1338,55 @@ async function handleApi(req, res, pathname, url) {
       const account = await accounts.requireAuth(authTokenFrom(req));
       const transactions = await accounts.recentTransactions(account.id, url.searchParams.get('limit'));
       return json(res, 200, { ok: true, transactions });
+    }
+
+    if (req.method === 'GET' && pathname === '/api/social/events') {
+      const account = await accounts.requireAuth(String(url.searchParams.get('token') || ''));
+      const userId = Number(account.id);
+      await accounts.touchUser(userId).catch(() => {});
+      res.writeHead(200, commonHeaders({
+        'Content-Type': 'text/event-stream',
+        'Cache-Control': 'no-cache, no-transform',
+        'Connection': 'keep-alive',
+        'X-Accel-Buffering': 'no'
+      }));
+      res.write(': social-connected\n\n');
+      if (!socialClients.has(userId)) socialClients.set(userId, new Set());
+      const set = socialClients.get(userId);
+      set.add(res);
+      socialSend(res, 'snapshot', await socialSnapshotFor(userId));
+      broadcastPresence(userId).catch(() => {});
+      const heartbeat = setInterval(() => { try { res.write(': ping\n\n'); } catch (_) {} }, 15000);
+      req.on('close', () => {
+        clearInterval(heartbeat);
+        set.delete(res);
+        if (!set.size) socialClients.delete(userId);
+        accounts.touchUser(userId).catch(() => {});
+        setTimeout(() => broadcastPresence(userId).catch(() => {}), 1200);
+      });
+      return;
+    }
+    if (req.method === 'GET' && pathname === '/api/social/snapshot') {
+      const account = await accounts.requireAuth(authTokenFrom(req));
+      await accounts.touchUser(account.id).catch(() => {});
+      return json(res, 200, { ok: true, snapshot: await socialSnapshotFor(account.id) });
+    }
+    if (req.method === 'GET' && pathname === '/api/social/search') {
+      const account = await accounts.requireAuth(authTokenFrom(req));
+      const users = await accounts.searchUsers(account.id, url.searchParams.get('q'));
+      return json(res, 200, { ok: true, users: users.map(user => ({ ...user, online: socialOnline(user.id) })) });
+    }
+    if (req.method === 'GET' && pathname === '/api/social/profile') {
+      const account = await accounts.requireAuth(authTokenFrom(req));
+      const profile = await accounts.publicProfile(account.id, url.searchParams.get('userId'));
+      return json(res, 200, { ok: true, profile: { ...profile, online: socialOnline(profile.id) } });
+    }
+    if (req.method === 'GET' && pathname === '/api/social/conversation') {
+      const account = await accounts.requireAuth(authTokenFrom(req));
+      const otherId = Number(url.searchParams.get('userId'));
+      const messages = await accounts.conversation(account.id, otherId, url.searchParams.get('limit'));
+      await broadcastSocial([account.id, otherId]);
+      return json(res, 200, { ok: true, messages });
     }
     if (req.method === 'GET' && pathname === '/api/events') {
       const room = getRoom(url.searchParams.get('room'));
@@ -1342,6 +1450,84 @@ async function handleApi(req, res, pathname, url) {
       const account = await accounts.requireAuth(authTokenFrom(req, body));
       const updated = await accounts.updateProfile(account.id, body);
       return json(res, 200, { ok: true, account: updated });
+    }
+
+    if (pathname === '/api/social/friend-request') {
+      const account = await accounts.requireAuth(authTokenFrom(req, body));
+      const result = await accounts.sendFriendRequest(account.id, body.userId);
+      await broadcastSocial([account.id, result.targetId]);
+      return json(res, 200, { ok: true, accepted: result.accepted });
+    }
+    if (pathname === '/api/social/friend-response') {
+      const account = await accounts.requireAuth(authTokenFrom(req, body));
+      const result = await accounts.respondFriendRequest(account.id, body.requestId, String(body.action || ''));
+      await broadcastSocial([result.senderId, result.receiverId]);
+      return json(res, 200, { ok: true, accepted: result.accepted });
+    }
+    if (pathname === '/api/social/friend-cancel') {
+      const account = await accounts.requireAuth(authTokenFrom(req, body));
+      const targetId = await accounts.cancelFriendRequest(account.id, body.requestId);
+      await broadcastSocial([account.id, targetId]);
+      return json(res, 200, { ok: true });
+    }
+    if (pathname === '/api/social/friend-remove') {
+      const account = await accounts.requireAuth(authTokenFrom(req, body));
+      const otherId = Number(body.userId);
+      await accounts.removeFriend(account.id, otherId);
+      await broadcastSocial([account.id, otherId]);
+      return json(res, 200, { ok: true });
+    }
+    if (pathname === '/api/social/block') {
+      const account = await accounts.requireAuth(authTokenFrom(req, body));
+      const otherId = Number(body.userId);
+      await accounts.blockUser(account.id, otherId);
+      await broadcastSocial([account.id, otherId]);
+      return json(res, 200, { ok: true });
+    }
+    if (pathname === '/api/social/unblock') {
+      const account = await accounts.requireAuth(authTokenFrom(req, body));
+      const otherId = Number(body.userId);
+      await accounts.unblockUser(account.id, otherId);
+      await broadcastSocial([account.id, otherId]);
+      return json(res, 200, { ok: true });
+    }
+    if (pathname === '/api/social/message') {
+      const account = await accounts.requireAuth(authTokenFrom(req, body));
+      checkSocialMessageRate(account.id);
+      const otherId = Number(body.userId);
+      const message = await accounts.sendDirectMessage(account.id, otherId, body.text);
+      await broadcastSocial([account.id, otherId]);
+      return json(res, 200, { ok: true, message });
+    }
+    if (pathname === '/api/social/invite') {
+      const account = await accounts.requireAuth(authTokenFrom(req, body));
+      const inviteeId = Number(body.userId);
+      let targetType = String(body.targetType || '');
+      let tableId = null, roomCode = null, tableName = '';
+      if (targetType === 'public') {
+        ensurePublicTables();
+        const target = publicRoomById(body.tableId);
+        if (!target) throw new Error('Public table not found.');
+        tableId = target.publicId;
+        roomCode = target.code;
+        tableName = target.publicName;
+      } else if (targetType === 'private') {
+        const target = getRoom(body.roomCode);
+        if (!target || target.isPublic) throw new Error('Private room not found.');
+        if (target.stage !== 'lobby') throw new Error('Private-room invitations are available before the game starts.');
+        if (!target.players.some(player => Number(player.userId) === Number(account.id) && !player.cashedOut)) throw new Error('Take a seat in that private room before inviting friends.');
+        roomCode = target.code;
+        tableName = `Private Table · ${target.code}`;
+      } else throw new Error('Choose a valid table invitation.');
+      const result = await accounts.sendTableInvite({ inviterId: account.id, inviteeId, targetType, tableId, roomCode, tableName });
+      await broadcastSocial([account.id, result.inviteeId]);
+      return json(res, 200, { ok: true });
+    }
+    if (pathname === '/api/social/invite-response') {
+      const account = await accounts.requireAuth(authTokenFrom(req, body));
+      const invite = await accounts.respondTableInvite(account.id, body.inviteId, String(body.action || ''));
+      await broadcastSocial([invite.inviterId, invite.inviteeId]);
+      return json(res, 200, { ok: true, invite });
     }
     if (pathname === '/api/public/join') {
       const authToken = authTokenFrom(req, body);
@@ -1478,6 +1664,8 @@ setInterval(() => {
 async function shutdown(signal) {
   console.log(`${signal} received. Refunding unsettled tables before shutdown.`);
   server.close();
+  for (const clients of socialClients.values()) for (const res of clients) { try { res.end(); } catch (_) {} }
+  socialClients.clear();
   for (const room of rooms.values()) {
     clearTurnTimer(room);
     clearPublicNextTimer(room);
