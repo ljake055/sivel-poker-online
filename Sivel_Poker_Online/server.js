@@ -16,6 +16,17 @@ const ROOM_IDLE_MS = 4 * 60 * 60 * 1000;
 const SUITS = ['♠', '♥', '♦', '♣'];
 const RANKS = [2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14];
 const ROOM_THEMES = new Set(['tropical', 'castle', 'penthouse', 'underground']);
+const DEALER_IDS = Object.freeze(['kayla', 'maddie', 'john']);
+const DEALER_SET = new Set(DEALER_IDS);
+function shuffledDealers() {
+  const pool = [...DEALER_IDS];
+  for (let i = pool.length - 1; i > 0; i--) {
+    const j = crypto.randomInt(i + 1);
+    [pool[i], pool[j]] = [pool[j], pool[i]];
+  }
+  return pool;
+}
+const PUBLIC_DEALERS = shuffledDealers();
 const PROFILE_AVATARS = new Set(['🕶️','🦊','🐺','🦁','🐉','👑','⚡','🎯','🃏','🤖','👻','🧙‍♂️','🦅','🔥','💎','🥷']);
 const CHAT_MAX_LENGTH = 220;
 const CHAT_MAX_MESSAGES = 80;
@@ -23,9 +34,9 @@ const CHAT_RATE_MS = 750;
 const PUBLIC_NEXT_HAND_MS = 3800;
 const PUBLIC_DISCONNECT_GRACE_MS = 90 * 1000;
 const PUBLIC_TABLE_DEFINITIONS = Object.freeze([
-  { id: 'starter', code: 'ST01', name: 'Sivel Starter', description: 'Fast heads-up action', maxPlayers: 2, buyIn: 500, smallBlind: 5, bigBlind: 10, theme: 'tropical' },
-  { id: 'main-room', code: 'MAIN', name: 'The Main Room', description: 'Four-seat classic cash game', maxPlayers: 4, buyIn: 1000, smallBlind: 10, bigBlind: 20, theme: 'penthouse' },
-  { id: 'high-stakes', code: 'VIP1', name: 'Sivel High Stakes', description: 'Six-seat premium table', maxPlayers: 6, buyIn: 2500, smallBlind: 25, bigBlind: 50, theme: 'underground' }
+  { id: 'starter', code: 'ST01', name: 'Sivel Starter', description: 'Fast heads-up action', maxPlayers: 2, buyIn: 500, smallBlind: 5, bigBlind: 10, theme: 'tropical', dealer: PUBLIC_DEALERS[0] },
+  { id: 'main-room', code: 'MAIN', name: 'The Main Room', description: 'Four-seat classic cash game', maxPlayers: 4, buyIn: 1000, smallBlind: 10, bigBlind: 20, theme: 'penthouse', dealer: PUBLIC_DEALERS[1] },
+  { id: 'high-stakes', code: 'VIP1', name: 'Sivel High Stakes', description: 'Six-seat premium table', maxPlayers: 6, buyIn: 2500, smallBlind: 25, bigBlind: 50, theme: 'underground', dealer: PUBLIC_DEALERS[2] }
 ]);
 const accounts = createAccountStore({ databaseUrl: process.env.DATABASE_URL, production: process.env.NODE_ENV === 'production' });
 const loginAttempts = new Map();
@@ -263,7 +274,8 @@ function createRoom(hostAccount, options = {}) {
       buyIn,
       smallBlind: Math.max(1, Math.floor(bigBlind / 2)),
       bigBlind,
-      theme: ROOM_THEMES.has(options.theme) ? options.theme : 'tropical'
+      theme: ROOM_THEMES.has(options.theme) ? options.theme : 'tropical',
+      dealer: DEALER_SET.has(options.dealer) ? options.dealer : 'kayla'
     },
     players: [],
     clients: new Map(),
@@ -298,7 +310,8 @@ function createPublicRoom(definition) {
       buyIn: definition.buyIn,
       smallBlind: definition.smallBlind,
       bigBlind: definition.bigBlind,
-      theme: definition.theme
+      theme: definition.theme,
+      dealer: DEALER_SET.has(definition.dealer) ? definition.dealer : 'kayla'
     },
     players: [],
     clients: new Map(),
@@ -362,6 +375,7 @@ function publicTableSummary(room) {
     name: room.publicName,
     description: room.publicDescription,
     theme: room.options.theme,
+    dealer: room.options.dealer || 'kayla',
     maxPlayers: room.options.maxPlayers,
     buyIn: room.options.buyIn,
     smallBlind: room.options.smallBlind,
@@ -1048,6 +1062,7 @@ function updateOptions(room, values) {
   const requestedBuyIn = clampInt(values.buyIn, 100, 10000, room.options.buyIn);
   if (requestedBuyIn !== room.options.buyIn) throw new Error('The buy-in is locked after the room is created. Create a new room to use different stakes.');
   if (ROOM_THEMES.has(values.theme)) room.options.theme = values.theme;
+  if (!room.isPublic && DEALER_SET.has(values.dealer)) room.options.dealer = values.dealer;
   broadcast(room);
 }
 
@@ -1522,7 +1537,7 @@ async function handleApi(req, res, pathname, url) {
     }
     if (req.method === 'GET' && pathname === '/api/health') {
       const database = await accounts.health();
-      return json(res, 200, { ok: true, version: 'table-controls-sounds-1', database: database.ok, rooms: rooms.size, publicTables: PUBLIC_TABLE_DEFINITIONS.length, now: Date.now() });
+      return json(res, 200, { ok: true, version: 'dealer-card-faces-1', database: database.ok, rooms: rooms.size, publicTables: PUBLIC_TABLE_DEFINITIONS.length, now: Date.now() });
     }
     if (req.method === 'GET' && pathname === '/api/public-tables') {
       ensurePublicTables();
