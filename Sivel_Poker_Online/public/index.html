@@ -3,8 +3,9 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Sivel Poker — Solo & Online Multiplayer (Hand-State Fix)</title>
+<title>Sivel Poker — Solo & Online Multiplayer (Board Reset Fix)</title>
 <!-- Sivel Poker full online build 2026-07-21 -->
+<!-- Visual board reset fix: stale community cards are cleared before every new hand/session -->
 <meta name="sivel-multiplayer-server" content="https://sivel-poker-online.onrender.com">
 <style>
 :root{
@@ -909,7 +910,7 @@ let settings=loadSettings();
 let state=createEmptyState();
 let tableSessionActive=false,matchSettled=true,soundOn=!!settings.sound;
 let aiTimer=null,transitionTimer=null,handToken=0;
-let renderCache={board:'',pot:null};
+let renderCache={board:null,pot:null};
 let seatNodes=new Map();
 let lastSessionSnapshot='';
 
@@ -980,7 +981,7 @@ function startSession(){
   activeBuyIn=selectedBuyIn;activeCount=selectedCount;activeDifficulty=selectedDifficulty;activeRoom=selectedRoom;activeDealer=selectedDealer;
   profile.bankroll-=activeBuyIn;profile.tablesPlayed++;profile.careerProfit-=activeBuyIn;saveProfile();
   state=createEmptyState();state.players=createPlayers();state.dealerIndex=Math.floor(Math.random()*state.players.length);state.minRaise=BLINDS[activeBuyIn].bb;
-  tableSessionActive=true;matchSettled=false;clearTimers();clearRoundPresentation();handToken++;renderCache={board:'',pot:null};
+  tableSessionActive=true;matchSettled=false;clearTimers();clearRoundPresentation();handToken++;renderCache={board:null,pot:null};
   $('log').innerHTML='';$('lobbyScreen').classList.add('hidden');$('gameScreen').classList.remove('hidden');
   applyRoom();buildSeats();updateGameStaticUI();startHand();
 }
@@ -1145,7 +1146,7 @@ function playResultSound(type){
 }
 function flashTable(type){const el=document.querySelector('.table-stage');if(!el)return;el.classList.remove('result-win','result-loss','result-tie');void el.offsetWidth;el.classList.add(type==='win'?'result-win':type==='loss'?'result-loss':'result-tie');clearTimeout(flashTable.timer);flashTable.timer=setTimeout(()=>el.classList.remove('result-win','result-loss','result-tie'),2400);}
 function hideHandResult(clearContent=false){const overlay=$('resultOverlay');if(overlay)overlay.className='result-overlay';if(clearContent){const title=$('resultOverlayTitle'),hand=$('resultOverlayHand'),detail=$('resultOverlayDetail');if(title)title.textContent='';if(hand)hand.textContent='';if(detail)detail.textContent='';}}
-function clearRoundPresentation(){clearTimeout(showHandResult.timer);clearTimeout(announce.timer);clearTimeout(flashTable.timer);const flash=$('actionFlash');if(flash)flash.innerHTML='';hideHandResult(true);const stage=document.querySelector('.table-stage');if(stage)stage.classList.remove('result-win','result-loss','result-tie');}
+function clearRoundPresentation(){clearTimeout(showHandResult.timer);clearTimeout(announce.timer);clearTimeout(flashTable.timer);const flash=$('actionFlash');if(flash)flash.innerHTML='';const board=$('board');if(board)board.innerHTML='';if(renderCache)renderCache.board=null;hideHandResult(true);const stage=document.querySelector('.table-stage');if(stage)stage.classList.remove('result-win','result-loss','result-tie');}
 function showHandResult(type,title,detail='',expectedToken=handToken){
   if(!state||expectedToken!==handToken||!state.handOver||state.phase!=='complete'||state.completedHandToken!==expectedToken||state.handNo<1)return;
   const overlay=$('resultOverlay');if(!overlay)return;
