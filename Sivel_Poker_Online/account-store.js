@@ -332,11 +332,16 @@ function createAccountStore({ databaseUrl, production = false } = {}) {
         `SELECT * FROM table_sessions WHERE player_token = $1 FOR UPDATE`,
         [playerToken]
       );
-      if (!session.rowCount || session.rows[0].status !== 'active') {
+      if (!session.rowCount) {
         await client.query('COMMIT');
-        return false;
+        return null;
       }
       const row = session.rows[0];
+      if (row.status !== 'active') {
+        const account = await accountById(client, row.user_id);
+        await client.query('COMMIT');
+        return account;
+      }
       const wallet = await client.query('SELECT balance FROM wallets WHERE user_id = $1 FOR UPDATE', [row.user_id]);
       const before = Number(wallet.rows[0].balance);
       const amount = Number(row.buy_in);
@@ -351,8 +356,53 @@ function createAccountStore({ databaseUrl, production = false } = {}) {
          VALUES ($1, $2, $3, $4, $5, $6, $7)`,
         [row.user_id, amount, before, after, reason, row.table_id, row.room_code]
       );
+      const account = await accountById(client, row.user_id);
       await client.query('COMMIT');
-      return true;
+      return account;
+    } catch (err) {
+      await client.query('ROLLBACK');
+      throw err;
+    } finally {
+      client.release();
+    }
+  }
+
+  async function cashOutPlayer(playerToken, payout, reason = 'table_cash_out') {
+    payout = Math.max(0, Math.floor(Number(payout) || 0));
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
+      const session = await client.query(
+        `SELECT * FROM table_sessions WHERE player_token = $1 FOR UPDATE`,
+        [playerToken]
+      );
+      if (!session.rowCount) {
+        await client.query('COMMIT');
+        return { changed: false, payout: 0, account: null };
+      }
+      const row = session.rows[0];
+      if (row.status !== 'active') {
+        const account = await accountById(client, row.user_id);
+        await client.query('COMMIT');
+        return { changed: false, payout: Number(row.payout) || 0, account };
+      }
+      const wallet = await client.query('SELECT balance FROM wallets WHERE user_id = $1 FOR UPDATE', [row.user_id]);
+      if (!wallet.rowCount) throw new Error('Player wallet not found.');
+      const before = Number(wallet.rows[0].balance);
+      const after = before + payout;
+      await client.query('UPDATE wallets SET balance = $2, updated_at = NOW() WHERE user_id = $1', [row.user_id, after]);
+      await client.query(
+        `UPDATE table_sessions SET status = 'cashed_out', payout = $2, updated_at = NOW() WHERE id = $1`,
+        [row.id, payout]
+      );
+      await client.query(
+        `INSERT INTO wallet_transactions(user_id, amount, balance_before, balance_after, reason, table_id, room_code)
+         VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+        [row.user_id, payout, before, after, reason, row.table_id, row.room_code]
+      );
+      const account = await accountById(client, row.user_id);
+      await client.query('COMMIT');
+      return { changed: true, payout, account };
     } catch (err) {
       await client.query('ROLLBACK');
       throw err;
@@ -490,6 +540,7 @@ function createAccountStore({ databaseUrl, production = false } = {}) {
     updateProfile,
     reserveBuyIn,
     refundPlayer,
+    cashOutPlayer,
     refundTable,
     recoverInterruptedTables,
     settleTable,
