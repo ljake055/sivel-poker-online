@@ -354,7 +354,7 @@ function publicTableSummary(room) {
   const joinable = seated.length < room.options.maxPlayers && physicalSeatsAvailable;
   let status = 'Waiting for players';
   if (activeHand) status = `Hand ${room.game.handNo} in progress`;
-  else if (room.game && room.game.handOver && liveIndices(room).length >= 2) status = 'Next hand starting';
+  else if (room.game && room.game.handOver && activeIndices(room).length >= 2) status = 'Next hand starting';
   else if (seated.length === 1) status = 'One player waiting';
   return {
     id: room.publicId,
@@ -379,7 +379,7 @@ function publicTableSummary(room) {
 function schedulePublicPlay(room, delay = PUBLIC_NEXT_HAND_MS) {
   if (!room || !room.isPublic) return;
   clearPublicNextTimer(room);
-  const enoughPlayers = room.stage === 'lobby' ? seatedPlayers(room).length >= 2 : liveIndices(room).length >= 2;
+  const enoughPlayers = room.stage === 'lobby' ? seatedPlayers(room).filter(player => !player.sittingOut).length >= 2 : activeIndices(room).length >= 2;
   if (!enoughPlayers) {
     if (room.game) {
       room.game.handOver = true;
@@ -401,7 +401,7 @@ function schedulePublicPlay(room, delay = PUBLIC_NEXT_HAND_MS) {
     try {
       compactPublicPlayers(room);
       if (room.stage === 'lobby') startTable(room);
-      else if (room.game && room.game.handOver && !room.game.tableOver && liveIndices(room).length >= 2) startHand(room);
+      else if (room.game && room.game.handOver && !room.game.tableOver && activeIndices(room).length >= 2) startHand(room);
     } catch (err) {
       console.error(`Unable to continue public table ${room.code}:`, err);
       if (room.game) room.game.status = 'The table is waiting to restart.';
@@ -454,6 +454,9 @@ function makePlayer(playerToken, account, seat, buyIn) {
     cashOutPending: false,
     cashedOut: false,
     waitingForNextHand: false,
+    sittingOut: false,
+    sitOutNextHand: false,
+    leaveAfterHand: false,
     disconnectTimer: null
   };
 }
@@ -501,6 +504,10 @@ function liveIndices(room) {
   return room.players.map((p, i) => p.chips > 0 && !p.cashedOut ? i : -1).filter(i => i >= 0);
 }
 
+function activeIndices(room) {
+  return room.players.map((p, i) => p.chips > 0 && !p.cashedOut && !p.sittingOut ? i : -1).filter(i => i >= 0);
+}
+
 function nextIndex(room, start, predicate) {
   for (let step = 1; step <= room.players.length; step++) {
     const i = (start + step) % room.players.length;
@@ -510,7 +517,7 @@ function nextIndex(room, start, predicate) {
 }
 
 function nextLive(room, start) {
-  return nextIndex(room, start, p => p.chips > 0 && !p.cashedOut);
+  return nextIndex(room, start, p => p.chips > 0 && !p.cashedOut && !p.sittingOut);
 }
 
 function contenders(room) {
@@ -595,12 +602,16 @@ function startTable(room) {
     p.seat = i;
     p.chips = Number(p.reservedBuyIn) || room.options.buyIn;
     p.waitingForNextHand = false;
+    p.sittingOut = false;
+    p.sitOutNextHand = false;
+    p.leaveAfterHand = false;
   });
+  const startingSeats = activeIndices(room);
   room.game = {
     handNo: 0,
     handId: 0,
     phase: 'idle',
-    dealerIndex: crypto.randomInt(room.players.length),
+    dealerIndex: startingSeats[crypto.randomInt(startingSeats.length)],
     sbIndex: null,
     bbIndex: null,
     deck: [],
@@ -627,7 +638,16 @@ function startHand(room) {
   if (!game || game.tableOver) throw new Error('The table is not available.');
   clearTurnTimer(room);
   if (room.isPublic) compactPublicPlayers(room);
+
+  for (const player of room.players) {
+    if (player.sitOutNextHand) {
+      player.sitOutNextHand = false;
+      player.sittingOut = true;
+    }
+  }
+
   const live = liveIndices(room);
+  const active = activeIndices(room);
   if (live.length <= 1) {
     if (room.isPublic) {
       game.handOver = true;
@@ -639,7 +659,22 @@ function startHand(room) {
     } else finishTable(room);
     return;
   }
-  if (game.handNo > 0) game.dealerIndex = nextLive(room, game.dealerIndex);
+  if (active.length <= 1) {
+    game.handOver = true;
+    game.tableOver = false;
+    game.phase = 'waiting';
+    game.currentActor = null;
+    game.board = [];
+    game.pot = 0;
+    game.reveal = false;
+    game.result = null;
+    game.status = 'Waiting for another seated player to return.';
+    broadcast(room);
+    return;
+  }
+
+  if (!active.includes(game.dealerIndex)) game.dealerIndex = active[0];
+  else if (game.handNo > 0) game.dealerIndex = nextLive(room, game.dealerIndex);
   game.handNo += 1;
   game.handId += 1;
   const handId = game.handId;
@@ -658,17 +693,17 @@ function startHand(room) {
   game.turnDeadline = 0;
 
   for (const p of room.players) {
-    p.inHand = p.chips > 0;
+    p.inHand = p.chips > 0 && !p.cashedOut && !p.sittingOut;
     p.hole = p.inHand ? [draw(game), draw(game)] : [];
     p.folded = !p.inHand;
     p.allIn = false;
     p.acted = false;
     p.streetBet = 0;
     p.totalBet = 0;
-    p.waitingForNextHand = !p.inHand;
+    p.waitingForNextHand = !p.inHand && !p.sittingOut;
   }
 
-  if (live.length === 2) {
+  if (active.length === 2) {
     game.sbIndex = game.dealerIndex;
     game.bbIndex = nextLive(room, game.dealerIndex);
   } else {
@@ -894,14 +929,49 @@ function buildSidePots(room) {
 function finishHand(room) {
   const game = room.game;
   clearTurnTimer(room);
+
+  for (const player of room.players) {
+    if (player.sitOutNextHand) {
+      player.sitOutNextHand = false;
+      player.sittingOut = true;
+    }
+  }
+
+  const scheduledLeaves = room.players.filter(player => player.leaveAfterHand && !player.cashedOut);
+  if (scheduledLeaves.length) {
+    game.status += ' · Processing scheduled cash-out.';
+    broadcast(room);
+    setTimeout(async () => {
+      for (const player of scheduledLeaves) {
+        if (!player.cashedOut) {
+          player.leaveAfterHand = false;
+          await leaveRoom(room, player.token).catch(err => console.error('Scheduled cash-out failed:', err));
+        }
+      }
+      if (room.isPublic) schedulePublicPlay(room, 900);
+      else if (room.game && !room.game.tableOver && activeIndices(room).length < 2) {
+        room.game.phase = 'waiting';
+        room.game.status = 'Waiting for another seated player to return.';
+        broadcast(room);
+      }
+    }, 350);
+    return;
+  }
+
   const live = liveIndices(room);
+  const active = activeIndices(room);
   if (room.isPublic) {
     game.tableOver = false;
-    game.status += live.length >= 2 ? ' · Next hand deals automatically.' : ' · Waiting for another player.';
+    game.status += active.length >= 2 ? ' · Next hand deals automatically.' : ' · Waiting for an active player.';
     broadcast(room);
     schedulePublicPlay(room);
   } else if (live.length <= 1) {
     finishTable(room);
+  } else if (active.length <= 1) {
+    game.phase = 'waiting';
+    game.currentActor = null;
+    game.status += ' · Waiting for another seated player to return.';
+    broadcast(room);
   } else {
     game.status += ' · Host may deal the next hand.';
     broadcast(room);
@@ -964,6 +1034,9 @@ function resetToLobby(room) {
     p.inHand = false;
     p.streetBet = 0;
     p.totalBet = 0;
+    p.sittingOut = false;
+    p.sitOutNextHand = false;
+    p.leaveAfterHand = false;
   });
   log(room, 'The host returned the room to the lobby.');
   broadcast(room);
@@ -1161,6 +1234,69 @@ async function leaveRoom(room, playerToken) {
   return { account: cashout.account || null, payout: cashout.payout ?? payout };
 }
 
+async function topUpSeat(room, player, requestedAmount) {
+  if (room.stage !== 'playing' || !room.game) throw new Error('The table has not started yet.');
+  if (player.cashedOut || player.cashOutPending) throw new Error('This seat is no longer available.');
+  if (!room.game.handOver && player.inHand && !player.sittingOut) throw new Error('Top-ups are available between hands or while sitting out.');
+  const maximum = Math.max(0, Math.min(Number(player.walletBalance) || 0, room.options.buyIn - (Number(player.chips) || 0)));
+  const amount = clampInt(requestedAmount, 1, maximum, maximum);
+  if (maximum <= 0 || amount <= 0) throw new Error('Your stack is already full or your online bankroll has no available chips.');
+  const result = await accounts.topUpPlayer(player.token, amount);
+  player.chips += amount;
+  player.reservedBuyIn += amount;
+  player.walletBalance = Number(result.account.bankroll);
+  log(room, `${player.name} tops up ${amount} chips.`);
+  systemChat(room, `${player.name} topped up to ${player.chips.toLocaleString()} chips.`);
+  broadcast(room);
+  return result;
+}
+
+async function handleTableControl(room, player, control, body) {
+  const game = room.game;
+  const activeHand = !!(game && !game.handOver && game.phase === 'betting' && player.inHand && !player.folded);
+  if (control === 'sit-out-next') {
+    if (player.sittingOut) throw new Error('You are already sitting out.');
+    if (activeHand) {
+      player.sitOutNextHand = !player.sitOutNextHand;
+      systemChat(room, `${player.name} ${player.sitOutNextHand ? 'will sit out the next hand' : 'cancelled the sit-out request'}.`);
+    } else {
+      player.sittingOut = true;
+      player.sitOutNextHand = false;
+      player.waitingForNextHand = false;
+      systemChat(room, `${player.name} is sitting out.`);
+    }
+    broadcast(room);
+    if (room.isPublic && game && game.handOver) schedulePublicPlay(room, 700);
+    return { ok: true };
+  }
+  if (control === 'return') {
+    player.sittingOut = false;
+    player.sitOutNextHand = false;
+    player.waitingForNextHand = true;
+    systemChat(room, `${player.name} returned to the table.`);
+    broadcast(room);
+    if (room.isPublic && game && game.handOver) schedulePublicPlay(room, 700);
+    return { ok: true };
+  }
+  if (control === 'leave-after-hand') {
+    if (!activeHand) return { immediateLeave: true };
+    player.leaveAfterHand = !player.leaveAfterHand;
+    systemChat(room, `${player.name} ${player.leaveAfterHand ? 'will cash out after this hand' : 'cancelled the scheduled cash-out'}.`);
+    broadcast(room);
+    return { ok: true };
+  }
+  if (control === 'cancel-leave') {
+    player.leaveAfterHand = false;
+    broadcast(room);
+    return { ok: true };
+  }
+  if (control === 'top-up') {
+    const result = await topUpSeat(room, player, body.amount);
+    return { ok: true, account: result.account, amount: result.amount };
+  }
+  throw new Error('Unknown table control.');
+}
+
 function publicState(room, viewerToken) {
   const viewerIndex = room.players.findIndex(p => p.token === viewerToken);
   const game = room.game;
@@ -1176,6 +1312,9 @@ function publicState(room, viewerToken) {
       connected: p.connected,
       cashedOut: !!p.cashedOut,
       waitingForNextHand: !!p.waitingForNextHand,
+      sittingOut: !!p.sittingOut,
+      sitOutNextHand: !!p.sitOutNextHand,
+      leaveAfterHand: !!p.leaveAfterHand,
       chips: p.chips,
       folded: p.folded,
       allIn: p.allIn,
@@ -1228,6 +1367,20 @@ function publicState(room, viewerToken) {
       turnDeadline: game.turnDeadline
     } : null,
     legal,
+    tableControls: viewerIndex >= 0 ? (() => {
+      const player = room.players[viewerIndex];
+      const betweenHands = !game || game.handOver || !player.inHand || player.sittingOut;
+      const topUpMax = Math.max(0, Math.min(Number(player.walletBalance) || 0, room.options.buyIn - (Number(player.chips) || 0)));
+      return {
+        sittingOut: !!player.sittingOut,
+        sitOutNextHand: !!player.sitOutNextHand,
+        leaveAfterHand: !!player.leaveAfterHand,
+        canTopUp: room.stage === 'playing' && betweenHands && topUpMax > 0 && !player.cashOutPending && !player.cashedOut,
+        topUpMax,
+        targetStack: room.options.buyIn,
+        onlineBankroll: Number(player.walletBalance) || 0
+      };
+    })() : null,
     chat: room.chat.map(message => ({
       id: message.id,
       at: message.at,
@@ -1369,7 +1522,7 @@ async function handleApi(req, res, pathname, url) {
     }
     if (req.method === 'GET' && pathname === '/api/health') {
       const database = await accounts.health();
-      return json(res, 200, { ok: true, version: 'daily-spin-1', database: database.ok, rooms: rooms.size, publicTables: PUBLIC_TABLE_DEFINITIONS.length, now: Date.now() });
+      return json(res, 200, { ok: true, version: 'table-controls-sounds-1', database: database.ok, rooms: rooms.size, publicTables: PUBLIC_TABLE_DEFINITIONS.length, now: Date.now() });
     }
     if (req.method === 'GET' && pathname === '/api/public-tables') {
       ensurePublicTables();
@@ -1695,6 +1848,14 @@ async function handleApi(req, res, pathname, url) {
     if (!player) throw new Error('Player session not found. Rejoin the room.');
     touch(room, player);
 
+    if (pathname === '/api/table-control') {
+      const result = await handleTableControl(room, player, String(body.control || ''), body);
+      if (result.immediateLeave) {
+        const left = await leaveRoom(room, body.token);
+        return json(res, 200, { ok: true, account: left.account, payout: left.payout, left: true });
+      }
+      return json(res, 200, result);
+    }
     if (pathname === '/api/chat') {
       sendChatMessage(room, player, body.text);
       return json(res, 200, { ok: true });
