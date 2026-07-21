@@ -1,0 +1,25 @@
+SIVEL POKER ONLINE — DEPLOYMENT
+
+PLAYERS WILL NOT DOWNLOAD ANYTHING.
+Only the game owner completes these deployment steps once.
+
+1. Go to GitHub and create a new repository named: sivel-poker-online
+2. In the new repository, choose Add file > Upload files.
+3. Upload every item inside this folder, preserving the public folder:
+   - public/index.html
+   - server.js
+   - package.json
+   - package-lock.json
+   - render.yaml
+   - .gitignore
+   - README.md
+4. Commit the uploaded files.
+5. In Render, choose New > Blueprint.
+6. Connect the sivel-poker-online GitHub repository.
+7. Render will detect render.yaml. Choose Deploy Blueprint.
+8. Open the generated onrender.com URL.
+9. Anyone can create a room and share the invite link or 4-character code.
+
+The Free Render plan can pause after inactivity, so the first page load may take
+about a minute after the site has been unused. A paid always-on instance removes
+that startup delay.

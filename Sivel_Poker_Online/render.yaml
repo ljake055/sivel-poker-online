@@ -1,0 +1,13 @@
+services:
+  - type: web
+    name: sivel-poker-online
+    runtime: node
+    plan: free
+    buildCommand: npm install
+    startCommand: npm start
+    healthCheckPath: /api/health
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: NO_OPEN
+        value: "1"
