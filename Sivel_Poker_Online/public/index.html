@@ -3,8 +3,8 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Sivel Poker — Clean Professional Lobby</title>
-<!-- Sivel Poker clean full-width professional lobby header v12 -->
+<title>Sivel Poker — Banner Cleanup</title>
+<!-- Sivel Poker banner cleanup v13 -->
 <!-- Includes persistent accounts, server-sided online bankrolls, multiplayer chat, professional cards, and local solo progression -->
 <meta name="sivel-multiplayer-server" content="https://sivel-poker-online.onrender.com">
 <style>
@@ -1298,6 +1298,69 @@ body.multiplayer-open{overflow:hidden}
 }
 </style>
 
+
+<style id="sivel-banner-cleanup-v13">
+/* Focused banner correction: preserve the approved header layout, remove the
+   repetitive network label, and give the Sivel Poker mark enough breathing room. */
+.brand-level-cache{display:none!important}
+.lobby-top.lobby-command-bar.final-command-bar{
+  grid-template-columns:minmax(340px,365px) minmax(0,1fr)!important;
+}
+.lobby-top.lobby-command-bar.final-command-bar .pro-logo{
+  min-width:0!important;
+  padding:8px 22px 8px 10px!important;
+  align-items:center!important;
+}
+.lobby-top.lobby-command-bar.final-command-bar .pro-logo .logo-mark{
+  flex:0 0 68px!important;
+  width:68px!important;
+  height:68px!important;
+}
+.lobby-top.lobby-command-bar.final-command-bar .pro-logo .logo-copy{
+  min-width:0!important;
+  overflow:visible!important;
+}
+.lobby-top.lobby-command-bar.final-command-bar .pro-logo .logo-copy strong{
+  display:block!important;
+  max-width:none!important;
+  overflow:visible!important;
+  text-overflow:clip!important;
+  white-space:nowrap!important;
+  line-height:1.06!important;
+}
+.lobby-top.lobby-command-bar.final-command-bar .pro-logo .logo-copy>span{
+  display:block!important;
+  max-width:none!important;
+  overflow:visible!important;
+  text-overflow:clip!important;
+  white-space:nowrap!important;
+  margin-top:7px!important;
+}
+.brand-network{display:none!important}
+@media(max-width:1320px){
+  .lobby-top.lobby-command-bar.final-command-bar{
+    grid-template-columns:minmax(310px,335px) minmax(0,1fr)!important;
+  }
+  .lobby-top.lobby-command-bar.final-command-bar .pro-logo{padding-right:15px!important}
+  .lobby-top.lobby-command-bar.final-command-bar .pro-logo .logo-copy strong{font-size:24px!important}
+}
+@media(max-width:1080px){
+  .lobby-top.lobby-command-bar.final-command-bar{grid-template-columns:1fr!important}
+  .lobby-top.lobby-command-bar.final-command-bar .pro-logo{
+    padding:8px 10px 13px!important;
+    border-right:0!important;
+    border-bottom:1px solid #26384b!important;
+  }
+}
+@media(max-width:560px){
+  .lobby-top.lobby-command-bar.final-command-bar .pro-logo .logo-mark{
+    width:60px!important;height:60px!important;flex-basis:60px!important;
+  }
+  .lobby-top.lobby-command-bar.final-command-bar .pro-logo .logo-copy strong{font-size:23px!important}
+  .lobby-top.lobby-command-bar.final-command-bar .pro-logo .logo-copy>span{font-size:8px!important;letter-spacing:.2em!important}
+}
+</style>
+
 </head>
 <body>
 <div id="lobbyScreen" class="screen fade-in">
@@ -1312,7 +1375,7 @@ body.multiplayer-open{overflow:hidden}
         <div class="brand-copy logo-copy">
           <strong>Sivel Poker</strong>
           <span>LIVE CASH POKER</span>
-          <div class="brand-network"><i></i><b>Cash Game Network</b><em id="topLevel">1 · Rookie</em></div>
+          <em id="topLevel" class="brand-level-cache" hidden>1 · Rookie</em>
         </div>
       </div>
       <div class="top-command-grid professional-command-layout" aria-label="Player and casino commands">
