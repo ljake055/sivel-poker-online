@@ -20,6 +20,13 @@ const PROFILE_AVATARS = new Set(['🕶️','🦊','🐺','🦁','🐉','👑','�
 const CHAT_MAX_LENGTH = 220;
 const CHAT_MAX_MESSAGES = 80;
 const CHAT_RATE_MS = 750;
+const PUBLIC_NEXT_HAND_MS = 3800;
+const PUBLIC_DISCONNECT_GRACE_MS = 90 * 1000;
+const PUBLIC_TABLE_DEFINITIONS = Object.freeze([
+  { id: 'starter', code: 'ST01', name: 'Sivel Starter', description: 'Fast heads-up action', maxPlayers: 2, buyIn: 500, smallBlind: 5, bigBlind: 10, theme: 'tropical' },
+  { id: 'main-room', code: 'MAIN', name: 'The Main Room', description: 'Four-seat classic cash game', maxPlayers: 4, buyIn: 1000, smallBlind: 10, bigBlind: 20, theme: 'penthouse' },
+  { id: 'high-stakes', code: 'VIP1', name: 'Sivel High Stakes', description: 'Six-seat premium table', maxPlayers: 6, buyIn: 2500, smallBlind: 25, bigBlind: 50, theme: 'underground' }
+]);
 const accounts = createAccountStore({ databaseUrl: process.env.DATABASE_URL, production: process.env.NODE_ENV === 'production' });
 const loginAttempts = new Map();
 
@@ -149,6 +156,11 @@ function createRoom(hostAccount, options = {}) {
     stage: 'lobby',
     settlementStarted: false,
     settlementComplete: false,
+    isPublic: false,
+    publicId: null,
+    publicName: '',
+    publicDescription: '',
+    publicNextTimer: null,
     options: {
       maxPlayers,
       buyIn,
@@ -167,6 +179,156 @@ function createRoom(hostAccount, options = {}) {
   log(room, `${hostAccount.displayName} created the room.`);
   systemChat(room, `${hostAccount.displayName} opened the table chat.`);
   return { room, playerToken: hostToken };
+}
+
+function createPublicRoom(definition) {
+  const room = {
+    id: crypto.randomUUID(),
+    code: definition.code,
+    hostToken: '',
+    createdAt: Date.now(),
+    updatedAt: Date.now(),
+    stage: 'lobby',
+    settlementStarted: false,
+    settlementComplete: false,
+    isPublic: true,
+    publicId: definition.id,
+    publicName: definition.name,
+    publicDescription: definition.description,
+    publicNextTimer: null,
+    options: {
+      maxPlayers: definition.maxPlayers,
+      buyIn: definition.buyIn,
+      smallBlind: definition.smallBlind,
+      bigBlind: definition.bigBlind,
+      theme: definition.theme
+    },
+    players: [],
+    clients: new Map(),
+    game: null,
+    log: [],
+    chat: []
+  };
+  rooms.set(room.code, room);
+  systemChat(room, `${room.publicName} is open.`);
+  log(room, `${room.publicName} opened as a permanent public table.`);
+  return room;
+}
+
+function ensurePublicTables() {
+  for (const definition of PUBLIC_TABLE_DEFINITIONS) {
+    const existing = rooms.get(definition.code);
+    if (!existing || !existing.isPublic) createPublicRoom(definition);
+  }
+}
+
+function publicRoomById(value) {
+  const key = String(value || '').trim().toLowerCase();
+  return [...rooms.values()].find(room => room.isPublic && (room.publicId === key || room.code.toLowerCase() === key));
+}
+
+function seatedPlayers(room) {
+  return room.players.filter(player => !player.cashedOut);
+}
+
+function clearPublicNextTimer(room) {
+  if (room && room.publicNextTimer) clearTimeout(room.publicNextTimer);
+  if (room) room.publicNextTimer = null;
+}
+
+function compactPublicPlayers(room) {
+  if (!room || !room.isPublic) return;
+  const dealerToken = room.game && room.game.dealerIndex != null && room.players[room.game.dealerIndex]
+    ? room.players[room.game.dealerIndex].token : null;
+  const removed = room.players.filter(player => player.cashedOut);
+  removed.forEach(player => { if (player.disconnectTimer) clearTimeout(player.disconnectTimer); });
+  room.players = room.players.filter(player => !player.cashedOut);
+  room.players.forEach((player, index) => { player.seat = index; });
+  if (room.game) {
+    const dealerIndex = dealerToken ? room.players.findIndex(player => player.token === dealerToken) : -1;
+    room.game.dealerIndex = dealerIndex >= 0 ? dealerIndex : Math.max(0, Math.min(room.game.dealerIndex || 0, room.players.length - 1));
+  }
+}
+
+function publicTableSummary(room) {
+  const seated = seatedPlayers(room);
+  const activeHand = !!(room.game && !room.game.handOver && room.game.phase === 'betting');
+  const physicalSeatsAvailable = !activeHand || room.players.length < room.options.maxPlayers;
+  const joinable = seated.length < room.options.maxPlayers && physicalSeatsAvailable;
+  let status = 'Waiting for players';
+  if (activeHand) status = `Hand ${room.game.handNo} in progress`;
+  else if (room.game && room.game.handOver && liveIndices(room).length >= 2) status = 'Next hand starting';
+  else if (seated.length === 1) status = 'One player waiting';
+  return {
+    id: room.publicId,
+    code: room.code,
+    name: room.publicName,
+    description: room.publicDescription,
+    theme: room.options.theme,
+    maxPlayers: room.options.maxPlayers,
+    buyIn: room.options.buyIn,
+    smallBlind: room.options.smallBlind,
+    bigBlind: room.options.bigBlind,
+    seated: seated.length,
+    connected: seated.filter(player => player.connected).length,
+    joinable,
+    status,
+    stage: room.stage,
+    handNo: room.game ? room.game.handNo : 0,
+    players: seated.map(player => ({ name: player.name, avatar: cleanAvatar(player.avatar), chips: player.chips }))
+  };
+}
+
+function schedulePublicPlay(room, delay = PUBLIC_NEXT_HAND_MS) {
+  if (!room || !room.isPublic) return;
+  clearPublicNextTimer(room);
+  const enoughPlayers = room.stage === 'lobby' ? seatedPlayers(room).length >= 2 : liveIndices(room).length >= 2;
+  if (!enoughPlayers) {
+    if (room.game) {
+      room.game.handOver = true;
+      room.game.tableOver = false;
+      room.game.currentActor = null;
+      room.game.phase = 'waiting';
+      room.game.board = [];
+      room.game.street = 'preflop';
+      room.game.pot = 0;
+      room.game.reveal = false;
+      room.game.result = null;
+      room.game.status = 'Waiting for another player to take a seat.';
+    }
+    broadcast(room);
+    return;
+  }
+  room.publicNextTimer = setTimeout(() => {
+    room.publicNextTimer = null;
+    try {
+      compactPublicPlayers(room);
+      if (room.stage === 'lobby') startTable(room);
+      else if (room.game && room.game.handOver && !room.game.tableOver && liveIndices(room).length >= 2) startHand(room);
+    } catch (err) {
+      console.error(`Unable to continue public table ${room.code}:`, err);
+      if (room.game) room.game.status = 'The table is waiting to restart.';
+      broadcast(room);
+    }
+  }, Math.max(250, Number(delay) || PUBLIC_NEXT_HAND_MS));
+  if (room.publicNextTimer.unref) room.publicNextTimer.unref();
+}
+
+function resetPublicRoom(room) {
+  clearTurnTimer(room);
+  clearPublicNextTimer(room);
+  for (const response of room.clients.values()) { try { response.end(); } catch (_) {} }
+  room.clients.clear();
+  room.players.forEach(player => { if (player.disconnectTimer) clearTimeout(player.disconnectTimer); });
+  room.players = [];
+  room.hostToken = '';
+  room.stage = 'lobby';
+  room.game = null;
+  room.updatedAt = Date.now();
+  room.log = [];
+  room.chat = [];
+  systemChat(room, `${room.publicName} is open.`);
+  log(room, `${room.publicName} reset and reopened.`);
 }
 
 function makePlayer(playerToken, account, seat, buyIn) {
@@ -191,7 +353,9 @@ function makePlayer(playerToken, account, seat, buyIn) {
     lastSeen: Date.now(),
     lastChatAt: 0,
     cashOutPending: false,
-    cashedOut: false
+    cashedOut: false,
+    waitingForNextHand: false,
+    disconnectTimer: null
   };
 }
 
@@ -213,6 +377,8 @@ function touch(room, player) {
   if (player) {
     player.lastSeen = Date.now();
     player.connected = true;
+    if (player.disconnectTimer) clearTimeout(player.disconnectTimer);
+    player.disconnectTimer = null;
   }
 }
 
@@ -323,11 +489,13 @@ function armTurnTimer(room) {
 
 function startTable(room) {
   if (room.stage !== 'lobby') throw new Error('The table has already started.');
-  if (room.players.length < 2) throw new Error('At least two players are required.');
+  if (room.isPublic) compactPublicPlayers(room);
+  if (seatedPlayers(room).length < 2) throw new Error('At least two players are required.');
   room.stage = 'playing';
   room.players.forEach((p, i) => {
     p.seat = i;
-    p.chips = room.options.buyIn;
+    p.chips = Number(p.reservedBuyIn) || room.options.buyIn;
+    p.waitingForNextHand = false;
   });
   room.game = {
     handNo: 0,
@@ -359,9 +527,17 @@ function startHand(room) {
   const game = room.game;
   if (!game || game.tableOver) throw new Error('The table is not available.');
   clearTurnTimer(room);
+  if (room.isPublic) compactPublicPlayers(room);
   const live = liveIndices(room);
   if (live.length <= 1) {
-    finishTable(room);
+    if (room.isPublic) {
+      game.handOver = true;
+      game.tableOver = false;
+      game.phase = 'waiting';
+      game.currentActor = null;
+      game.status = 'Waiting for another player to take a seat.';
+      broadcast(room);
+    } else finishTable(room);
     return;
   }
   if (game.handNo > 0) game.dealerIndex = nextLive(room, game.dealerIndex);
@@ -390,6 +566,7 @@ function startHand(room) {
     p.acted = false;
     p.streetBet = 0;
     p.totalBet = 0;
+    p.waitingForNextHand = !p.inHand;
   }
 
   if (live.length === 2) {
@@ -619,7 +796,12 @@ function finishHand(room) {
   const game = room.game;
   clearTurnTimer(room);
   const live = liveIndices(room);
-  if (live.length <= 1) {
+  if (room.isPublic) {
+    game.tableOver = false;
+    game.status += live.length >= 2 ? ' · Next hand deals automatically.' : ' · Waiting for another player.';
+    broadcast(room);
+    schedulePublicPlay(room);
+  } else if (live.length <= 1) {
     finishTable(room);
   } else {
     game.status += ' · Host may deal the next hand.';
@@ -631,6 +813,16 @@ function finishTable(room) {
   const game = room.game;
   clearTurnTimer(room);
   const live = liveIndices(room);
+  if (room.isPublic) {
+    game.tableOver = false;
+    game.handOver = true;
+    game.phase = 'waiting';
+    game.currentActor = null;
+    game.status = 'Waiting for another player to take a seat.';
+    broadcast(room);
+    schedulePublicPlay(room);
+    return;
+  }
   const winner = live.length === 1 ? room.players[live[0]] : room.players.slice().sort((a, b) => b.chips - a.chips)[0];
   game.tableOver = true;
   game.handOver = true;
@@ -688,6 +880,7 @@ function updateOptions(room, values) {
 }
 
 function joinRoom(room, account, requestedToken, newPlayerToken) {
+  if (room.isPublic) throw new Error('Choose this table from the Public Tables list.');
   let player = requestedToken ? getPlayer(room, requestedToken) : null;
   if (player) {
     if (Number(player.userId) !== Number(account.id)) throw new Error('That saved seat belongs to a different account.');
@@ -712,6 +905,56 @@ function joinRoom(room, account, requestedToken, newPlayerToken) {
   return playerToken;
 }
 
+async function joinPublicRoom(room, account, authToken, requestedToken) {
+  if (!room || !room.isPublic) throw new Error('Public table not found.');
+  if (room.game && room.game.handOver) compactPublicPlayers(room);
+
+  let player = requestedToken ? getPlayer(room, requestedToken) : null;
+  if (!player) player = room.players.find(candidate => !candidate.cashedOut && Number(candidate.userId) === Number(account.id));
+  if (player) {
+    player.connected = true;
+    player.name = cleanName(account.displayName);
+    player.avatar = cleanAvatar(account.avatar);
+    player.walletBalance = Number(account.bankroll);
+    player.lastSeen = Date.now();
+    systemChat(room, `${player.name} reconnected.`);
+    broadcast(room);
+    return { playerToken: player.token, account: await accounts.requireAuth(authToken) };
+  }
+
+  const seated = seatedPlayers(room);
+  if (seated.length >= room.options.maxPlayers) throw new Error('This public table is full.');
+  if (room.game && !room.game.handOver && room.players.length >= room.options.maxPlayers) {
+    throw new Error('A seat is opening after the current hand. Try again in a moment.');
+  }
+
+  const playerToken = token();
+  const remaining = await accounts.reserveBuyIn({
+    userId: account.id,
+    amount: room.options.buyIn,
+    tableId: room.id,
+    roomCode: room.code,
+    playerToken
+  });
+  account.bankroll = remaining;
+  player = makePlayer(playerToken, account, room.players.length, room.options.buyIn);
+  player.walletBalance = remaining;
+  if (room.stage === 'playing') {
+    player.chips = room.options.buyIn;
+    player.folded = true;
+    player.inHand = false;
+    player.waitingForNextHand = true;
+  }
+  room.players.push(player);
+  if (!room.hostToken) room.hostToken = playerToken;
+  log(room, `${player.name} joined ${room.publicName}.`);
+  systemChat(room, `${player.name} took a seat${room.stage === 'playing' ? ' and will enter on the next hand' : ''}.`);
+  broadcast(room);
+  if (room.stage === 'lobby' && seatedPlayers(room).length >= 2) schedulePublicPlay(room, 700);
+  else if (room.stage === 'playing' && room.game && room.game.handOver) schedulePublicPlay(room, 900);
+  return { playerToken, account: await accounts.requireAuth(authToken) };
+}
+
 function sendChatMessage(room, player, value) {
   const text = cleanChatText(value);
   if (!text) throw new Error('Type a message before sending.');
@@ -731,6 +974,8 @@ function sendChatMessage(room, player, value) {
 async function leaveRoom(room, playerToken) {
   const player = getPlayer(room, playerToken);
   if (!player) return { account: null, payout: 0 };
+  if (player.disconnectTimer) clearTimeout(player.disconnectTimer);
+  player.disconnectTimer = null;
 
   const stream = room.clients.get(playerToken);
   if (stream) {
@@ -747,7 +992,11 @@ async function leaveRoom(room, playerToken) {
     log(room, `${player.name} left the room and received ${payout} chips back.`);
     systemChat(room, `${player.name} left the table.`);
     if (room.players.length === 0) {
-      rooms.delete(room.code);
+      if (room.isPublic) {
+        room.hostToken = '';
+        room.updatedAt = Date.now();
+        broadcast(room);
+      } else rooms.delete(room.code);
       return { account, payout };
     }
     if (room.hostToken === playerToken) room.hostToken = room.players[0].token;
@@ -807,6 +1056,7 @@ async function leaveRoom(room, playerToken) {
     broadcast(room);
   }
 
+  if (room.isPublic) schedulePublicPlay(room, 900);
   return { account: cashout.account || null, payout: cashout.payout ?? payout };
 }
 
@@ -822,12 +1072,13 @@ function publicState(room, viewerToken) {
       avatar: cleanAvatar(p.avatar),
       connected: p.connected,
       cashedOut: !!p.cashedOut,
+      waitingForNextHand: !!p.waitingForNextHand,
       chips: p.chips,
       folded: p.folded,
       allIn: p.allIn,
       inHand: p.inHand,
       streetBet: p.streetBet,
-      isHost: p.token === room.hostToken,
+      isHost: !room.isPublic && p.token === room.hostToken,
       isSelf: self,
       onlineBankroll: self ? Number(p.walletBalance) : null,
       hole: self || revealHole ? p.hole : p.hole.map(() => null)
@@ -848,7 +1099,11 @@ function publicState(room, viewerToken) {
     serverTime: Date.now(),
     room: room.code,
     stage: room.stage,
-    isHost: viewerToken === room.hostToken,
+    isPublic: !!room.isPublic,
+    publicId: room.publicId,
+    publicName: room.publicName,
+    publicDescription: room.publicDescription,
+    isHost: !room.isPublic && viewerToken === room.hostToken,
     options: room.options,
     players,
     game: game ? {
@@ -1009,7 +1264,12 @@ async function handleApi(req, res, pathname, url) {
     }
     if (req.method === 'GET' && pathname === '/api/health') {
       const database = await accounts.health();
-      return json(res, 200, { ok: true, version: 'accounts-bankroll-2-cashout', database: database.ok, rooms: rooms.size, now: Date.now() });
+      return json(res, 200, { ok: true, version: 'public-tables-1', database: database.ok, rooms: rooms.size, publicTables: PUBLIC_TABLE_DEFINITIONS.length, now: Date.now() });
+    }
+    if (req.method === 'GET' && pathname === '/api/public-tables') {
+      ensurePublicTables();
+      const tables = PUBLIC_TABLE_DEFINITIONS.map(definition => publicTableSummary(rooms.get(definition.code)));
+      return json(res, 200, { ok: true, tables, now: Date.now() });
     }
     if (req.method === 'GET' && pathname === '/api/account') {
       const account = await accounts.requireAuth(authTokenFrom(req));
@@ -1044,6 +1304,15 @@ async function handleApi(req, res, pathname, url) {
         clearInterval(heartbeat);
         if (room.clients.get(playerToken) === res) room.clients.delete(playerToken);
         player.connected = false;
+        if (room.isPublic && !player.cashedOut) {
+          if (player.disconnectTimer) clearTimeout(player.disconnectTimer);
+          player.disconnectTimer = setTimeout(() => {
+            if (!player.connected && getPlayer(room, playerToken) === player && !player.cashedOut) {
+              leaveRoom(room, playerToken).catch(err => console.error(`Public disconnect cash-out failed for ${room.code}:`, err));
+            }
+          }, PUBLIC_DISCONNECT_GRACE_MS);
+          if (player.disconnectTimer.unref) player.disconnectTimer.unref();
+        }
         broadcast(room);
       });
       return;
@@ -1073,6 +1342,21 @@ async function handleApi(req, res, pathname, url) {
       const account = await accounts.requireAuth(authTokenFrom(req, body));
       const updated = await accounts.updateProfile(account.id, body);
       return json(res, 200, { ok: true, account: updated });
+    }
+    if (pathname === '/api/public/join') {
+      const authToken = authTokenFrom(req, body);
+      const account = await accounts.requireAuth(authToken);
+      ensurePublicTables();
+      const room = publicRoomById(body.tableId || body.room);
+      if (!room) throw new Error('Public table not found.');
+      const joined = await joinPublicRoom(room, account, authToken, body.token);
+      touch(room, getPlayer(room, joined.playerToken));
+      return json(res, 200, {
+        room: room.code,
+        token: joined.playerToken,
+        account: joined.account,
+        state: publicState(room, joined.playerToken)
+      });
     }
     if (pathname === '/api/create') {
       const authToken = authTokenFrom(req, body);
@@ -1130,11 +1414,13 @@ async function handleApi(req, res, pathname, url) {
       return json(res, 200, { ok: true });
     }
     if (pathname === '/api/options') {
+      if (room.isPublic) throw new Error('Public table settings are fixed.');
       if (room.hostToken !== body.token) throw new Error('Only the host can change table options.');
       updateOptions(room, body.options || {});
       return json(res, 200, { ok: true });
     }
     if (pathname === '/api/start') {
+      if (room.isPublic) throw new Error('Public tables start automatically.');
       if (room.hostToken !== body.token) throw new Error('Only the host can start the table.');
       startTable(room);
       return json(res, 200, { ok: true });
@@ -1144,6 +1430,7 @@ async function handleApi(req, res, pathname, url) {
       return json(res, 200, { ok: true });
     }
     if (pathname === '/api/next-hand') {
+      if (room.isPublic) throw new Error('Public tables deal automatically.');
       if (room.hostToken !== body.token) throw new Error('Only the host can deal the next hand.');
       if (!room.game || !room.game.handOver || room.game.tableOver) throw new Error('The current hand is not ready to continue.');
       startHand(room);
@@ -1176,11 +1463,14 @@ const server = http.createServer((req, res) => {
 setInterval(() => {
   const now = Date.now();
   for (const [code, room] of rooms) {
+    if (room.isPublic) continue;
     if (now - room.updatedAt > ROOM_IDLE_MS) {
       clearTurnTimer(room);
+      clearPublicNextTimer(room);
       for (const res of room.clients.values()) { try { res.end(); } catch (_) {} }
       accounts.refundTable(room.id, 'idle_room_refund').catch(err => console.error('Idle room refund failed:', err));
-      rooms.delete(code);
+      if (room.isPublic) resetPublicRoom(room);
+      else rooms.delete(code);
     }
   }
 }, 10 * 60 * 1000).unref();
@@ -1190,6 +1480,8 @@ async function shutdown(signal) {
   server.close();
   for (const room of rooms.values()) {
     clearTurnTimer(room);
+    clearPublicNextTimer(room);
+    room.players.forEach(player => { if (player.disconnectTimer) clearTimeout(player.disconnectTimer); });
     await accounts.refundTable(room.id, 'server_shutdown_refund').catch(err => console.error('Shutdown refund failed:', err));
   }
   await accounts.close().catch(() => {});
@@ -1201,10 +1493,11 @@ process.once('SIGINT', () => shutdown('SIGINT'));
 async function boot() {
   await accounts.init();
   const recovered = await accounts.recoverInterruptedTables();
+  ensurePublicTables();
   if (recovered) console.log(`Recovered ${recovered} interrupted table buy-in(s).`);
   server.listen(PORT, HOST, () => {
     const publicUrl = process.env.RENDER_EXTERNAL_URL || `http://localhost:${PORT}`;
-    console.log(`Sivel Poker Online with accounts listening on ${publicUrl}`);
+    console.log(`Sivel Poker Online with public tables listening on ${publicUrl}`);
   });
 }
 
