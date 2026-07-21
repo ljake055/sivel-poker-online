@@ -189,7 +189,9 @@ function makePlayer(playerToken, account, seat, buyIn) {
     streetBet: 0,
     totalBet: 0,
     lastSeen: Date.now(),
-    lastChatAt: 0
+    lastChatAt: 0,
+    cashOutPending: false,
+    cashedOut: false
   };
 }
 
@@ -231,7 +233,7 @@ function draw(game) {
 }
 
 function liveIndices(room) {
-  return room.players.map((p, i) => p.chips > 0 ? i : -1).filter(i => i >= 0);
+  return room.players.map((p, i) => p.chips > 0 && !p.cashedOut ? i : -1).filter(i => i >= 0);
 }
 
 function nextIndex(room, start, predicate) {
@@ -243,7 +245,7 @@ function nextIndex(room, start, predicate) {
 }
 
 function nextLive(room, start) {
-  return nextIndex(room, start, p => p.chips > 0);
+  return nextIndex(room, start, p => p.chips > 0 && !p.cashedOut);
 }
 
 function contenders(room) {
@@ -425,6 +427,7 @@ function action(room, playerToken, payload) {
   if (index < 0) throw new Error('Player not found.');
   if (game.currentActor !== index) throw new Error('It is not your turn.');
   const p = room.players[index];
+  if (p.cashOutPending || p.cashedOut) throw new Error('This seat is cashing out.');
   const type = String(payload.type || '').toLowerCase();
   const owed = amountToCall(room, index);
   clearTurnTimer(room);
@@ -727,35 +730,84 @@ function sendChatMessage(room, player, value) {
 
 async function leaveRoom(room, playerToken) {
   const player = getPlayer(room, playerToken);
-  if (!player) return;
+  if (!player) return { account: null, payout: 0 };
+
+  const stream = room.clients.get(playerToken);
+  if (stream) {
+    try { stream.end(); } catch (_) {}
+    room.clients.delete(playerToken);
+  }
+
   if (room.stage === 'lobby') {
-    await accounts.refundPlayer(playerToken, 'lobby_leave_refund');
+    const account = await accounts.refundPlayer(playerToken, 'lobby_leave_refund');
+    const payout = Number(player.reservedBuyIn) || Number(room.options.buyIn) || 0;
     const index = room.players.indexOf(player);
     room.players.splice(index, 1);
     room.players.forEach((p, i) => p.seat = i);
-    room.clients.delete(playerToken);
-    log(room, `${player.name} left the room.`);
+    log(room, `${player.name} left the room and received ${payout} chips back.`);
     systemChat(room, `${player.name} left the table.`);
     if (room.players.length === 0) {
       rooms.delete(room.code);
-      return;
+      return { account, payout };
     }
     if (room.hostToken === playerToken) room.hostToken = room.players[0].token;
-  } else {
-    player.connected = false;
-    player.lastSeen = Date.now();
-    log(room, `${player.name} disconnected and may rejoin.`);
-    systemChat(room, `${player.name} disconnected.`);
-    if (room.game && !room.game.handOver && room.game.phase === 'betting' && room.game.currentActor === player.seat) {
-      clearTurnTimer(room);
-      const owed = amountToCall(room, player.seat);
-      if (owed === 0) player.acted = true;
-      else { player.folded = true; player.acted = true; }
-      afterAction(room, player.seat);
-      return;
-    }
+    broadcast(room);
+    return { account, payout };
   }
-  broadcast(room);
+
+  if (player.cashOutPending) throw new Error('Your cash-out is already being processed.');
+  player.cashOutPending = true;
+  const payout = Math.max(0, Math.floor(Number(player.chips) || 0));
+  let cashout;
+  try {
+    cashout = await accounts.cashOutPlayer(playerToken, payout, 'table_cash_out');
+  } catch (err) {
+    player.cashOutPending = false;
+    throw err;
+  }
+
+  if (cashout.account) player.walletBalance = Number(cashout.account.bankroll);
+  player.cashOutPending = false;
+  player.cashedOut = true;
+  player.connected = false;
+  player.lastSeen = Date.now();
+  player.chips = 0;
+  player.folded = true;
+  player.allIn = false;
+  player.acted = true;
+  player.inHand = false;
+
+  log(room, `${player.name} cashed out ${payout} chips and left the table.`);
+  systemChat(room, `${player.name} cashed out and left the table.`);
+
+  if (room.hostToken === playerToken) {
+    const nextHost = room.players.find(p => !p.cashedOut && p.chips > 0);
+    if (nextHost) room.hostToken = nextHost.token;
+  }
+
+  const game = room.game;
+  if (game && !game.tableOver) {
+    if (!game.handOver && game.phase === 'betting') {
+      const remaining = contenders(room);
+      if (remaining.length === 1) {
+        clearTurnTimer(room);
+        awardUncontested(room, remaining[0]);
+      } else if (game.currentActor === player.seat) {
+        clearTurnTimer(room);
+        afterAction(room, player.seat);
+      } else {
+        broadcast(room);
+      }
+    } else if (liveIndices(room).length <= 1) {
+      finishTable(room);
+    } else {
+      broadcast(room);
+    }
+  } else {
+    broadcast(room);
+  }
+
+  return { account: cashout.account || null, payout: cashout.payout ?? payout };
 }
 
 function publicState(room, viewerToken) {
@@ -769,6 +821,7 @@ function publicState(room, viewerToken) {
       name: p.name,
       avatar: cleanAvatar(p.avatar),
       connected: p.connected,
+      cashedOut: !!p.cashedOut,
       chips: p.chips,
       folded: p.folded,
       allIn: p.allIn,
@@ -956,7 +1009,7 @@ async function handleApi(req, res, pathname, url) {
     }
     if (req.method === 'GET' && pathname === '/api/health') {
       const database = await accounts.health();
-      return json(res, 200, { ok: true, version: 'accounts-bankroll-1', database: database.ok, rooms: rooms.size, now: Date.now() });
+      return json(res, 200, { ok: true, version: 'accounts-bankroll-2-cashout', database: database.ok, rooms: rooms.size, now: Date.now() });
     }
     if (req.method === 'GET' && pathname === '/api/account') {
       const account = await accounts.requireAuth(authTokenFrom(req));
@@ -1100,8 +1153,8 @@ async function handleApi(req, res, pathname, url) {
       throw new Error('This account-backed table is complete. Leave and create a new table for the next match.');
     }
     if (pathname === '/api/leave') {
-      await leaveRoom(room, body.token);
-      return json(res, 200, { ok: true });
+      const result = await leaveRoom(room, body.token);
+      return json(res, 200, { ok: true, account: result.account, payout: result.payout });
     }
     return json(res, 404, { error: 'Unknown API route.' });
   } catch (err) {
