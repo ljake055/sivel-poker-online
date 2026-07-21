@@ -4,6 +4,7 @@ const http = require('http');
 const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
+const { createAccountStore } = require('./account-store');
 
 const PORT = Number(process.env.PORT || 3000);
 const HOST = '0.0.0.0';
@@ -19,6 +20,8 @@ const PROFILE_AVATARS = new Set(['🕶️','🦊','🐺','🦁','🐉','👑','�
 const CHAT_MAX_LENGTH = 220;
 const CHAT_MAX_MESSAGES = 80;
 const CHAT_RATE_MS = 750;
+const accounts = createAccountStore({ databaseUrl: process.env.DATABASE_URL, production: process.env.NODE_ENV === 'production' });
+const loginAttempts = new Map();
 
 
 function commonHeaders(extra = {}) {
@@ -28,7 +31,7 @@ function commonHeaders(extra = {}) {
     'Referrer-Policy': 'same-origin',
     'Permissions-Policy': 'camera=(), microphone=(), geolocation=()',
     'Access-Control-Allow-Origin': '*',
-    'Access-Control-Allow-Headers': 'Content-Type',
+    'Access-Control-Allow-Headers': 'Content-Type, Authorization',
     'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
     ...extra
   };
@@ -60,6 +63,30 @@ function readJson(req) {
     });
     req.on('error', reject);
   });
+}
+
+function authTokenFrom(req, body = {}) {
+  const header = String(req.headers.authorization || '');
+  const bearer = header.toLowerCase().startsWith('bearer ') ? header.slice(7).trim() : '';
+  return String(body.authToken || bearer || '').trim();
+}
+
+function clientIp(req) {
+  return String(req.headers['x-forwarded-for'] || req.socket.remoteAddress || 'unknown').split(',')[0].trim();
+}
+
+function checkLoginRate(req, username) {
+  const key = `${clientIp(req)}:${String(username || '').toLowerCase()}`;
+  const now = Date.now();
+  const recent = (loginAttempts.get(key) || []).filter(at => now - at < 10 * 60 * 1000);
+  if (recent.length >= 8) throw new Error('Too many login attempts. Please wait a few minutes.');
+  recent.push(now);
+  loginAttempts.set(key, recent);
+  return key;
+}
+
+function clearLoginRate(key) {
+  if (key) loginAttempts.delete(key);
 }
 
 function cleanName(value) {
@@ -107,18 +134,21 @@ function log(room, message) {
   room.log = room.log.slice(0, 40);
 }
 
-function createRoom(hostName, options = {}, hostAvatar) {
+function createRoom(hostAccount, options = {}) {
   const code = roomCode();
   const hostToken = token();
   const maxPlayers = clampInt(options.maxPlayers, 2, 6, 6);
   const buyIn = clampInt(options.buyIn, 100, 10000, 500);
   const bigBlind = Math.max(2, Math.floor(buyIn / 50));
   const room = {
+    id: crypto.randomUUID(),
     code,
     hostToken,
     createdAt: Date.now(),
     updatedAt: Date.now(),
     stage: 'lobby',
+    settlementStarted: false,
+    settlementComplete: false,
     options: {
       maxPlayers,
       buyIn,
@@ -132,18 +162,22 @@ function createRoom(hostName, options = {}, hostAvatar) {
     log: [],
     chat: []
   };
-  room.players.push(makePlayer(hostToken, hostName, 0, hostAvatar));
+  room.players.push(makePlayer(hostToken, hostAccount, 0, buyIn));
   rooms.set(code, room);
-  log(room, `${cleanName(hostName)} created the room.`);
-  systemChat(room, `${cleanName(hostName)} opened the table chat.`);
+  log(room, `${hostAccount.displayName} created the room.`);
+  systemChat(room, `${hostAccount.displayName} opened the table chat.`);
   return { room, playerToken: hostToken };
 }
 
-function makePlayer(playerToken, name, seat, avatar) {
+function makePlayer(playerToken, account, seat, buyIn) {
   return {
     token: playerToken,
-    name: cleanName(name),
-    avatar: cleanAvatar(avatar),
+    userId: account.id,
+    username: account.username,
+    name: cleanName(account.displayName),
+    avatar: cleanAvatar(account.avatar),
+    walletBalance: Number(account.bankroll),
+    reservedBuyIn: Number(buyIn) || 0,
     seat,
     connected: true,
     chips: 0,
@@ -600,10 +634,26 @@ function finishTable(room) {
   game.phase = 'complete';
   game.currentActor = null;
   game.reveal = true;
-  game.status = `${winner.name} wins the table with ${winner.chips} chips.`;
+  game.status = `${winner.name} wins the table with ${winner.chips} chips. Settling the online bankroll…`;
   game.result = { handId: game.handId, handNo: game.handNo, title: `${winner.name} wins the table`, detail: `${winner.chips} chips`, winners: [winner.seat], tableOver: true };
-  log(room, game.status);
+  log(room, `${winner.name} wins the table with ${winner.chips} chips.`);
   broadcast(room);
+  if (!room.settlementStarted) {
+    room.settlementStarted = true;
+    accounts.settleTable({ tableId: room.id, winnerPlayerToken: winner.token, payout: winner.chips, biggestPot: winner.chips })
+      .then(account => {
+        room.settlementComplete = true;
+        if (account) winner.walletBalance = Number(account.bankroll);
+        game.status = `${winner.name} wins the table with ${winner.chips} chips. Online bankroll settled.`;
+        broadcast(room);
+      })
+      .catch(err => {
+        room.settlementStarted = false;
+        game.status = `${winner.name} wins the table. Bankroll settlement needs attention.`;
+        console.error('Table settlement failed:', err);
+        broadcast(room);
+      });
+  }
 }
 
 function resetToLobby(room) {
@@ -628,20 +678,20 @@ function resetToLobby(room) {
 function updateOptions(room, values) {
   if (room.stage !== 'lobby') throw new Error('Options can only be changed in the lobby.');
   room.options.maxPlayers = clampInt(values.maxPlayers, Math.max(2, room.players.length), 6, room.options.maxPlayers);
-  room.options.buyIn = clampInt(values.buyIn, 100, 10000, room.options.buyIn);
-  const bb = Math.max(2, Math.floor(room.options.buyIn / 50));
-  room.options.bigBlind = bb;
-  room.options.smallBlind = Math.max(1, Math.floor(bb / 2));
+  const requestedBuyIn = clampInt(values.buyIn, 100, 10000, room.options.buyIn);
+  if (requestedBuyIn !== room.options.buyIn) throw new Error('The buy-in is locked after the room is created. Create a new room to use different stakes.');
   if (ROOM_THEMES.has(values.theme)) room.options.theme = values.theme;
   broadcast(room);
 }
 
-function joinRoom(room, name, requestedToken, avatar) {
+function joinRoom(room, account, requestedToken, newPlayerToken) {
   let player = requestedToken ? getPlayer(room, requestedToken) : null;
   if (player) {
+    if (Number(player.userId) !== Number(account.id)) throw new Error('That saved seat belongs to a different account.');
     player.connected = true;
-    player.name = cleanName(name || player.name);
-    player.avatar = cleanAvatar(avatar || player.avatar);
+    player.name = cleanName(account.displayName);
+    player.avatar = cleanAvatar(account.avatar);
+    player.walletBalance = Number(account.bankroll);
     player.lastSeen = Date.now();
     log(room, `${player.name} reconnected.`);
     systemChat(room, `${player.name} reconnected.`);
@@ -649,8 +699,9 @@ function joinRoom(room, name, requestedToken, avatar) {
   }
   if (room.stage !== 'lobby') throw new Error('This table has already started. Rejoin with the same browser instead.');
   if (room.players.length >= room.options.maxPlayers) throw new Error('This room is full.');
-  const playerToken = token();
-  player = makePlayer(playerToken, name, room.players.length, avatar);
+  if (room.players.some(p => Number(p.userId) === Number(account.id))) throw new Error('This account already has a seat at this table.');
+  const playerToken = newPlayerToken || token();
+  player = makePlayer(playerToken, account, room.players.length, room.options.buyIn);
   room.players.push(player);
   log(room, `${player.name} joined the room.`);
   systemChat(room, `${player.name} joined the table.`);
@@ -674,10 +725,11 @@ function sendChatMessage(room, player, value) {
   broadcast(room);
 }
 
-function leaveRoom(room, playerToken) {
+async function leaveRoom(room, playerToken) {
   const player = getPlayer(room, playerToken);
   if (!player) return;
   if (room.stage === 'lobby') {
+    await accounts.refundPlayer(playerToken, 'lobby_leave_refund');
     const index = room.players.indexOf(player);
     room.players.splice(index, 1);
     room.players.forEach((p, i) => p.seat = i);
@@ -724,6 +776,7 @@ function publicState(room, viewerToken) {
       streetBet: p.streetBet,
       isHost: p.token === room.hostToken,
       isSelf: self,
+      onlineBankroll: self ? Number(p.walletBalance) : null,
       hole: self || revealHole ? p.hole : p.hole.map(() => null)
     };
   });
@@ -902,7 +955,17 @@ async function handleApi(req, res, pathname, url) {
       return json(res, 200, { ok: true, publicUrl: `${proto}://${host}` });
     }
     if (req.method === 'GET' && pathname === '/api/health') {
-      return json(res, 200, { ok: true, version: 'multiplayer-chat-1', rooms: rooms.size, now: Date.now() });
+      const database = await accounts.health();
+      return json(res, 200, { ok: true, version: 'accounts-bankroll-1', database: database.ok, rooms: rooms.size, now: Date.now() });
+    }
+    if (req.method === 'GET' && pathname === '/api/account') {
+      const account = await accounts.requireAuth(authTokenFrom(req));
+      return json(res, 200, { ok: true, account });
+    }
+    if (req.method === 'GET' && pathname === '/api/wallet/transactions') {
+      const account = await accounts.requireAuth(authTokenFrom(req));
+      const transactions = await accounts.recentTransactions(account.id, url.searchParams.get('limit'));
+      return json(res, 200, { ok: true, transactions });
     }
     if (req.method === 'GET' && pathname === '/api/events') {
       const room = getRoom(url.searchParams.get('room'));
@@ -935,17 +998,72 @@ async function handleApi(req, res, pathname, url) {
     if (req.method !== 'POST') return json(res, 405, { error: 'Method not allowed.' });
     const body = await readJson(req);
 
+    if (pathname === '/api/register') {
+      const result = await accounts.register(body);
+      return json(res, 200, { ok: true, ...result });
+    }
+    if (pathname === '/api/login') {
+      const rateKey = checkLoginRate(req, body.username);
+      try {
+        const result = await accounts.login(body);
+        clearLoginRate(rateKey);
+        return json(res, 200, { ok: true, ...result });
+      } catch (err) {
+        throw err;
+      }
+    }
+    if (pathname === '/api/logout') {
+      await accounts.logout(authTokenFrom(req, body));
+      return json(res, 200, { ok: true });
+    }
+    if (pathname === '/api/profile') {
+      const account = await accounts.requireAuth(authTokenFrom(req, body));
+      const updated = await accounts.updateProfile(account.id, body);
+      return json(res, 200, { ok: true, account: updated });
+    }
     if (pathname === '/api/create') {
-      const { room, playerToken } = createRoom(body.name, body.options || {}, body.avatar);
+      const authToken = authTokenFrom(req, body);
+      const account = await accounts.requireAuth(authToken);
+      const { room, playerToken } = createRoom(account, body.options || {});
+      try {
+        const remaining = await accounts.reserveBuyIn({ userId: account.id, amount: room.options.buyIn, tableId: room.id, roomCode: room.code, playerToken });
+        room.players[0].walletBalance = remaining;
+      } catch (err) {
+        rooms.delete(room.code);
+        throw err;
+      }
+      const refreshed = await accounts.requireAuth(authToken);
       broadcast(room);
-      return json(res, 200, { room: room.code, token: playerToken, state: publicState(room, playerToken) });
+      return json(res, 200, { room: room.code, token: playerToken, account: refreshed, state: publicState(room, playerToken) });
     }
     if (pathname === '/api/join') {
+      const authToken = authTokenFrom(req, body);
+      const account = await accounts.requireAuth(authToken);
       const room = getRoom(body.room);
       if (!room) throw new Error('Room not found. Check the four-character code.');
-      const playerToken = joinRoom(room, body.name, body.token, body.avatar);
+      let playerToken;
+      const existing = body.token ? getPlayer(room, body.token) : null;
+      if (existing) {
+        playerToken = joinRoom(room, account, body.token);
+      } else {
+        if (room.stage !== 'lobby') throw new Error('This table has already started. Rejoin with the same browser instead.');
+        if (room.players.length >= room.options.maxPlayers) throw new Error('This room is full.');
+        if (room.players.some(p => Number(p.userId) === Number(account.id))) throw new Error('This account already has a seat at this table.');
+        playerToken = token();
+        try {
+          const remaining = await accounts.reserveBuyIn({ userId: account.id, amount: room.options.buyIn, tableId: room.id, roomCode: room.code, playerToken });
+          account.bankroll = remaining;
+          joinRoom(room, account, null, playerToken);
+        } catch (err) {
+          await accounts.refundPlayer(playerToken, 'join_failure_refund').catch(() => {});
+          throw err;
+        }
+      }
       touch(room, getPlayer(room, playerToken));
-      return json(res, 200, { room: room.code, token: playerToken, state: publicState(room, playerToken) });
+      const refreshed = await accounts.requireAuth(authToken);
+      const player = getPlayer(room, playerToken);
+      if (player) player.walletBalance = Number(refreshed.bankroll);
+      return json(res, 200, { room: room.code, token: playerToken, account: refreshed, state: publicState(room, playerToken) });
     }
 
     const room = getRoom(body.room);
@@ -979,12 +1097,10 @@ async function handleApi(req, res, pathname, url) {
       return json(res, 200, { ok: true });
     }
     if (pathname === '/api/reset-lobby') {
-      if (room.hostToken !== body.token) throw new Error('Only the host can return to the lobby.');
-      resetToLobby(room);
-      return json(res, 200, { ok: true });
+      throw new Error('This account-backed table is complete. Leave and create a new table for the next match.');
     }
     if (pathname === '/api/leave') {
-      leaveRoom(room, body.token);
+      await leaveRoom(room, body.token);
       return json(res, 200, { ok: true });
     }
     return json(res, 404, { error: 'Unknown API route.' });
@@ -1010,12 +1126,36 @@ setInterval(() => {
     if (now - room.updatedAt > ROOM_IDLE_MS) {
       clearTurnTimer(room);
       for (const res of room.clients.values()) { try { res.end(); } catch (_) {} }
+      accounts.refundTable(room.id, 'idle_room_refund').catch(err => console.error('Idle room refund failed:', err));
       rooms.delete(code);
     }
   }
 }, 10 * 60 * 1000).unref();
 
-server.listen(PORT, HOST, () => {
-  const publicUrl = process.env.RENDER_EXTERNAL_URL || `http://localhost:${PORT}`;
-  console.log(`Sivel Poker Online listening on ${publicUrl}`);
+async function shutdown(signal) {
+  console.log(`${signal} received. Refunding unsettled tables before shutdown.`);
+  server.close();
+  for (const room of rooms.values()) {
+    clearTurnTimer(room);
+    await accounts.refundTable(room.id, 'server_shutdown_refund').catch(err => console.error('Shutdown refund failed:', err));
+  }
+  await accounts.close().catch(() => {});
+  process.exit(0);
+}
+process.once('SIGTERM', () => shutdown('SIGTERM'));
+process.once('SIGINT', () => shutdown('SIGINT'));
+
+async function boot() {
+  await accounts.init();
+  const recovered = await accounts.recoverInterruptedTables();
+  if (recovered) console.log(`Recovered ${recovered} interrupted table buy-in(s).`);
+  server.listen(PORT, HOST, () => {
+    const publicUrl = process.env.RENDER_EXTERNAL_URL || `http://localhost:${PORT}`;
+    console.log(`Sivel Poker Online with accounts listening on ${publicUrl}`);
+  });
+}
+
+boot().catch(err => {
+  console.error('Unable to start Sivel Poker:', err);
+  process.exit(1);
 });
