@@ -90,6 +90,44 @@ function checkSocialMessageRate(userId) {
   socialMessageTimes.set(Number(userId), now);
 }
 
+
+function cleanAdminText(value, max = 180) {
+  return String(value || '').replace(/[\u0000-\u001F\u007F\u202A-\u202E\u2066-\u2069]/g, ' ').replace(/\s+/g, ' ').trim().slice(0, max);
+}
+
+function adminRoomSnapshot() {
+  return [...rooms.values()].map(room => ({
+    code: room.code,
+    name: room.isPublic ? room.publicName : `Private Table · ${room.code}`,
+    isPublic: !!room.isPublic,
+    stage: room.stage,
+    theme: room.options.theme,
+    seated: room.players.filter(player => !player.cashedOut).length,
+    maxPlayers: room.options.maxPlayers,
+    players: room.players.filter(player => !player.cashedOut).map(player => ({
+      userId: Number(player.userId), username: player.username, name: player.name, avatar: player.avatar,
+      chips: Number(player.chips || 0), connected: !!player.connected, isAdmin: !!player.isAdmin
+    }))
+  }));
+}
+
+async function sendAdminAnnouncement(admin, text) {
+  const message = cleanAdminText(text, 180);
+  if (!message) throw new Error('Enter an announcement first.');
+  for (const room of rooms.values()) {
+    pushChat(room, { system: true, senderToken: '', name: 'Sivel Poker Admin', avatar: '👑', role: 'admin', isAdmin: true, text: `ANNOUNCEMENT · ${message}` });
+    broadcast(room);
+  }
+  for (const clients of socialClients.values()) {
+    for (const response of [...clients]) {
+      try { socialSend(response, 'announcement', { text: message, by: admin.displayName, username: admin.username, at: Date.now() }); }
+      catch (_) { clients.delete(response); }
+    }
+  }
+  await accounts.recordAdminAction(admin.id, null, 'global_announcement', { text: message });
+  return message;
+}
+
 function commonHeaders(extra = {}) {
   return {
     'X-Content-Type-Options': 'nosniff',
@@ -334,7 +372,7 @@ function publicTableSummary(room) {
     status,
     stage: room.stage,
     handNo: room.game ? room.game.handNo : 0,
-    players: seated.map(player => ({ name: player.name, avatar: cleanAvatar(player.avatar), chips: player.chips }))
+    players: seated.map(player => ({ name: player.name, avatar: cleanAvatar(player.avatar), chips: player.chips, role: player.role || 'player', isAdmin: !!player.isAdmin }))
   };
 }
 
@@ -395,6 +433,8 @@ function makePlayer(playerToken, account, seat, buyIn) {
     token: playerToken,
     userId: account.id,
     username: account.username,
+    role: account.role || 'player',
+    isAdmin: !!account.isAdmin,
     name: cleanName(account.displayName),
     avatar: cleanAvatar(account.avatar),
     walletBalance: Number(account.bankroll),
@@ -1025,6 +1065,8 @@ function sendChatMessage(room, player, value) {
     senderToken: player.token,
     name: player.name,
     avatar: cleanAvatar(player.avatar),
+    role: player.role || 'player',
+    isAdmin: !!player.isAdmin,
     text
   });
   broadcast(room);
@@ -1129,6 +1171,8 @@ function publicState(room, viewerToken) {
       seat: index,
       name: p.name,
       avatar: cleanAvatar(p.avatar),
+      role: p.role || 'player',
+      isAdmin: !!p.isAdmin,
       connected: p.connected,
       cashedOut: !!p.cashedOut,
       waitingForNextHand: !!p.waitingForNextHand,
@@ -1191,6 +1235,8 @@ function publicState(room, viewerToken) {
       avatar: message.avatar,
       text: message.text,
       system: !!message.system,
+      role: message.role || 'player',
+      isAdmin: !!message.isAdmin,
       isSelf: !!message.senderToken && message.senderToken === viewerToken
     })),
     log: room.log
@@ -1323,7 +1369,7 @@ async function handleApi(req, res, pathname, url) {
     }
     if (req.method === 'GET' && pathname === '/api/health') {
       const database = await accounts.health();
-      return json(res, 200, { ok: true, version: 'friends-system-1', database: database.ok, rooms: rooms.size, publicTables: PUBLIC_TABLE_DEFINITIONS.length, now: Date.now() });
+      return json(res, 200, { ok: true, version: 'admin-system-1', database: database.ok, rooms: rooms.size, publicTables: PUBLIC_TABLE_DEFINITIONS.length, now: Date.now() });
     }
     if (req.method === 'GET' && pathname === '/api/public-tables') {
       ensurePublicTables();
@@ -1338,6 +1384,17 @@ async function handleApi(req, res, pathname, url) {
       const account = await accounts.requireAuth(authTokenFrom(req));
       const transactions = await accounts.recentTransactions(account.id, url.searchParams.get('limit'));
       return json(res, 200, { ok: true, transactions });
+    }
+
+    if (req.method === 'GET' && pathname === '/api/admin/overview') {
+      const admin = await accounts.requireAdmin(authTokenFrom(req));
+      const overview = await accounts.adminOverview();
+      return json(res, 200, { ok: true, admin, overview: { ...overview, rooms: adminRoomSnapshot() } });
+    }
+    if (req.method === 'GET' && pathname === '/api/admin/users') {
+      await accounts.requireAdmin(authTokenFrom(req));
+      const users = await accounts.adminSearchUsers(url.searchParams.get('q'));
+      return json(res, 200, { ok: true, users });
     }
 
     if (req.method === 'GET' && pathname === '/api/social/events') {
@@ -1450,6 +1507,32 @@ async function handleApi(req, res, pathname, url) {
       const account = await accounts.requireAuth(authTokenFrom(req, body));
       const updated = await accounts.updateProfile(account.id, body);
       return json(res, 200, { ok: true, account: updated });
+    }
+
+    if (pathname === '/api/admin/announcement') {
+      const admin = await accounts.requireAdmin(authTokenFrom(req, body));
+      const message = await sendAdminAnnouncement(admin, body.text);
+      return json(res, 200, { ok: true, message });
+    }
+    if (pathname === '/api/admin/adjust-bankroll') {
+      const admin = await accounts.requireAdmin(authTokenFrom(req, body));
+      const adjustment = await accounts.adminAdjustBankroll({ adminUserId: admin.id, targetUserId: Number(body.userId), amount: body.amount, reason: body.reason });
+      await broadcastSocial([Number(body.userId)]);
+      return json(res, 200, { ok: true, adjustment });
+    }
+    if (pathname === '/api/admin/kick') {
+      const admin = await accounts.requireAdmin(authTokenFrom(req, body));
+      const room = getRoom(body.roomCode);
+      if (!room) throw new Error('Table not found.');
+      const targetUserId = Number(body.userId);
+      const player = room.players.find(item => Number(item.userId) === targetUserId && !item.cashedOut);
+      if (!player) throw new Error('That player is no longer seated at this table.');
+      if (player.isAdmin && Number(player.userId) !== Number(admin.id)) throw new Error('Another administrator cannot be removed.');
+      const reason = cleanAdminText(body.reason || 'Removed by administrator.', 120) || 'Removed by administrator.';
+      pushChat(room, { system: true, senderToken: '', name: 'Sivel Poker Admin', avatar: '👑', role: 'admin', isAdmin: true, text: `${player.name} was removed from the table by an administrator.` });
+      const result = await leaveRoom(room, player.token);
+      await accounts.recordAdminAction(admin.id, targetUserId, 'table_removal', { roomCode: room.code, reason, payout: result.payout || 0 });
+      return json(res, 200, { ok: true, payout: result.payout || 0 });
     }
 
     if (pathname === '/api/social/friend-request') {
