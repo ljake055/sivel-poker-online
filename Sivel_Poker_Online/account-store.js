@@ -11,6 +11,8 @@ const USERNAME_RE = /^[A-Za-z0-9_]{3,18}$/;
 const BIO_MAX_LENGTH = 280;
 const DM_MAX_LENGTH = 500;
 const AVATARS = new Set(['🕶️','🦊','🐺','🦁','🐉','👑','⚡','🎯','🃏','🤖','👻','🧙‍♂️','🦅','🔥','💎','🥷']);
+const ADMIN_USERNAME_KEYS = new Set(String(process.env.SIVEL_ADMIN_USERNAMES || 'csivel16').split(',').map(value => value.trim().toLowerCase()).filter(Boolean));
+function roleForUsername(username) { return ADMIN_USERNAME_KEYS.has(String(username || '').trim().toLowerCase()) ? 'admin' : 'player'; }
 
 function cleanDisplayName(value, fallback = 'Player') {
   const name = String(value || '').replace(/[<>]/g, '').replace(/\s+/g, ' ').trim().slice(0, 18);
@@ -95,7 +97,8 @@ function createAccountStore({ databaseUrl, production = false } = {}) {
         password_salt VARCHAR(64) NOT NULL,
         password_hash VARCHAR(256) NOT NULL,
         created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-        last_login TIMESTAMPTZ
+        last_login TIMESTAMPTZ,
+        role VARCHAR(16) NOT NULL DEFAULT 'player'
       );
 
       CREATE TABLE IF NOT EXISTS player_profiles (
@@ -162,6 +165,7 @@ function createAccountStore({ databaseUrl, production = false } = {}) {
 
       ALTER TABLE player_profiles ADD COLUMN IF NOT EXISTS bio VARCHAR(280) NOT NULL DEFAULT '';
       ALTER TABLE users ADD COLUMN IF NOT EXISTS last_seen_at TIMESTAMPTZ;
+      ALTER TABLE users ADD COLUMN IF NOT EXISTS role VARCHAR(16) NOT NULL DEFAULT 'player';
 
       CREATE TABLE IF NOT EXISTS friendships (
         user_id_low BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
@@ -229,8 +233,21 @@ function createAccountStore({ databaseUrl, production = false } = {}) {
       CREATE INDEX IF NOT EXISTS table_invites_invitee_idx
         ON table_invites(invitee_id, status, created_at DESC);
 
+      CREATE TABLE IF NOT EXISTS admin_audit_log (
+        id BIGSERIAL PRIMARY KEY,
+        admin_user_id BIGINT NOT NULL REFERENCES users(id) ON DELETE RESTRICT,
+        target_user_id BIGINT REFERENCES users(id) ON DELETE SET NULL,
+        action VARCHAR(64) NOT NULL,
+        details JSONB NOT NULL DEFAULT '{}'::jsonb,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      );
+      CREATE INDEX IF NOT EXISTS admin_audit_created_idx ON admin_audit_log(created_at DESC);
+
     `);
 
+    for (const usernameKey of ADMIN_USERNAME_KEYS) {
+      await pool.query(`UPDATE users SET role = 'admin' WHERE username_key = $1`, [usernameKey]);
+    }
     await pool.query('DELETE FROM auth_sessions WHERE expires_at <= NOW()');
     await pool.query(`UPDATE table_invites SET status = 'expired', responded_at = NOW()
                       WHERE status = 'pending' AND expires_at <= NOW()`);
@@ -248,7 +265,7 @@ function createAccountStore({ databaseUrl, production = false } = {}) {
 
   async function accountById(client, userId) {
     const result = await client.query(
-      `SELECT u.id, u.username, u.created_at,
+      `SELECT u.id, u.username, u.created_at, u.role,
               p.display_name, p.avatar, p.bio, p.xp, p.level,
               p.tables_played, p.tables_won, p.hands_played, p.hands_won,
               p.biggest_pot, p.achievements,
@@ -264,6 +281,8 @@ function createAccountStore({ databaseUrl, production = false } = {}) {
     return {
       id: Number(row.id),
       username: row.username,
+      role: row.role || 'player',
+      isAdmin: row.role === 'admin',
       displayName: row.display_name,
       avatar: row.avatar,
       bio: row.bio || '',
@@ -291,9 +310,9 @@ function createAccountStore({ databaseUrl, production = false } = {}) {
     try {
       await client.query('BEGIN');
       const inserted = await client.query(
-        `INSERT INTO users(username_key, username, password_salt, password_hash, last_login)
-         VALUES ($1, $2, $3, $4, NOW()) RETURNING id`,
-        [key, username, passwordData.saltHex, passwordData.hashHex]
+        `INSERT INTO users(username_key, username, password_salt, password_hash, last_login, role)
+         VALUES ($1, $2, $3, $4, NOW(), $5) RETURNING id`,
+        [key, username, passwordData.saltHex, passwordData.hashHex, roleForUsername(username)]
       );
       const userId = inserted.rows[0].id;
       await client.query(
@@ -643,6 +662,8 @@ function createAccountStore({ databaseUrl, production = false } = {}) {
     return {
       id: Number(row.id),
       username: row.username,
+      role: row.role || 'player',
+      isAdmin: row.role === 'admin',
       displayName: row.display_name,
       avatar: row.avatar,
       bio: row.bio || '',
@@ -659,7 +680,7 @@ function createAccountStore({ databaseUrl, production = false } = {}) {
 
   async function publicProfile(viewerId, targetId) {
     const result = await pool.query(
-      `SELECT u.id, u.username, u.last_seen_at,
+      `SELECT u.id, u.username, u.last_seen_at, u.role,
               p.display_name, p.avatar, p.bio, p.level, p.xp,
               p.tables_played, p.tables_won, p.hands_played, p.hands_won, p.biggest_pot
        FROM users u JOIN player_profiles p ON p.user_id = u.id
@@ -690,7 +711,7 @@ function createAccountStore({ databaseUrl, production = false } = {}) {
     const q = String(query || '').trim().slice(0, 40);
     if (q.length < 2) return [];
     const result = await pool.query(
-      `SELECT u.id, u.username, u.last_seen_at,
+      `SELECT u.id, u.username, u.last_seen_at, u.role,
               p.display_name, p.avatar, p.bio, p.level, p.xp,
               p.tables_played, p.tables_won, p.hands_played, p.hands_won, p.biggest_pot,
               EXISTS(
@@ -934,7 +955,7 @@ function createAccountStore({ databaseUrl, production = false } = {}) {
            SELECT CASE WHEN user_id_low=$1 THEN user_id_high ELSE user_id_low END AS friend_id, created_at
            FROM friendships WHERE user_id_low=$1 OR user_id_high=$1
          )
-         SELECT u.id, u.username, u.last_seen_at, p.display_name, p.avatar, p.bio, p.level, p.xp,
+         SELECT u.id, u.username, u.last_seen_at, u.role, p.display_name, p.avatar, p.bio, p.level, p.xp,
                 p.tables_played, p.tables_won, p.hands_played, p.hands_won, p.biggest_pot,
                 f.created_at AS friends_since,
                 (SELECT COUNT(*)::int FROM direct_messages dm WHERE dm.sender_id=u.id AND dm.receiver_id=$1 AND dm.read_at IS NULL) AS unread_count,
@@ -945,20 +966,20 @@ function createAccountStore({ databaseUrl, production = false } = {}) {
         [userId]
       ),
       pool.query(
-        `SELECT fr.id, fr.created_at, u.id AS user_id, u.username, u.last_seen_at, p.display_name, p.avatar, p.bio, p.level
+        `SELECT fr.id, fr.created_at, u.id AS user_id, u.username, u.last_seen_at, u.role, p.display_name, p.avatar, p.bio, p.level
          FROM friend_requests fr JOIN users u ON u.id=fr.sender_id JOIN player_profiles p ON p.user_id=u.id
          WHERE fr.receiver_id=$1 AND fr.status='pending' ORDER BY fr.created_at DESC`, [userId]),
       pool.query(
-        `SELECT fr.id, fr.created_at, u.id AS user_id, u.username, u.last_seen_at, p.display_name, p.avatar, p.bio, p.level
+        `SELECT fr.id, fr.created_at, u.id AS user_id, u.username, u.last_seen_at, u.role, p.display_name, p.avatar, p.bio, p.level
          FROM friend_requests fr JOIN users u ON u.id=fr.receiver_id JOIN player_profiles p ON p.user_id=u.id
          WHERE fr.sender_id=$1 AND fr.status='pending' ORDER BY fr.created_at DESC`, [userId]),
       pool.query(
         `SELECT i.id, i.target_type, i.table_id, i.room_code, i.table_name, i.created_at, i.expires_at,
-                u.id AS inviter_id, u.username, p.display_name, p.avatar
+                u.id AS inviter_id, u.username, u.role, p.display_name, p.avatar
          FROM table_invites i JOIN users u ON u.id=i.inviter_id JOIN player_profiles p ON p.user_id=u.id
          WHERE i.invitee_id=$1 AND i.status='pending' AND i.expires_at>NOW() ORDER BY i.created_at DESC`, [userId]),
       pool.query(
-        `SELECT u.id, u.username, u.last_seen_at, p.display_name, p.avatar, p.bio, p.level
+        `SELECT u.id, u.username, u.last_seen_at, u.role, p.display_name, p.avatar, p.bio, p.level
          FROM user_blocks b JOIN users u ON u.id=b.blocked_id JOIN player_profiles p ON p.user_id=u.id
          WHERE b.blocker_id=$1 ORDER BY b.created_at DESC`, [userId]),
       accountById(pool, userId)
@@ -974,10 +995,99 @@ function createAccountStore({ databaseUrl, production = false } = {}) {
       invites: invitesResult.rows.map(row => ({
         id:row.id, targetType:row.target_type, tableId:row.table_id, roomCode:row.room_code,
         tableName:row.table_name, createdAt:row.created_at, expiresAt:row.expires_at,
-        inviter:{id:Number(row.inviter_id), username:row.username, displayName:row.display_name, avatar:row.avatar}
+        inviter:{id:Number(row.inviter_id), username:row.username, role:row.role||'player', isAdmin:row.role==='admin', displayName:row.display_name, avatar:row.avatar}
       })),
       blocked: blockedResult.rows.map(row => mapSocialUser(row))
     };
+  }
+
+
+  async function requireAdmin(rawToken) {
+    const account = await requireAuth(rawToken);
+    if (!account.isAdmin) throw new Error('Administrator access required.');
+    return account;
+  }
+
+  async function recordAdminAction(adminUserId, targetUserId, action, details = {}) {
+    await pool.query(
+      `INSERT INTO admin_audit_log(admin_user_id, target_user_id, action, details)
+       VALUES ($1,$2,$3,$4::jsonb)`,
+      [adminUserId, targetUserId || null, String(action || 'admin_action').slice(0,64), JSON.stringify(details || {})]
+    );
+  }
+
+  async function adminOverview() {
+    const [counts, recent] = await Promise.all([
+      pool.query(`SELECT
+        (SELECT COUNT(*)::int FROM users) AS accounts,
+        (SELECT COUNT(*)::int FROM auth_sessions WHERE expires_at > NOW() AND last_seen > NOW() - INTERVAL '15 minutes') AS active_sessions,
+        (SELECT COALESCE(SUM(balance),0)::bigint FROM wallets) AS total_chips,
+        (SELECT COUNT(*)::int FROM friendships) AS friendships`),
+      pool.query(`SELECT a.id, a.action, a.details, a.created_at,
+                         admin.username AS admin_username, target.username AS target_username
+                  FROM admin_audit_log a
+                  JOIN users admin ON admin.id=a.admin_user_id
+                  LEFT JOIN users target ON target.id=a.target_user_id
+                  ORDER BY a.created_at DESC LIMIT 20`)
+    ]);
+    const row = counts.rows[0];
+    return {
+      accounts: Number(row.accounts || 0),
+      activeSessions: Number(row.active_sessions || 0),
+      totalChips: Number(row.total_chips || 0),
+      friendships: Number(row.friendships || 0),
+      recentActions: recent.rows.map(item => ({
+        id: Number(item.id), action: item.action, details: item.details || {},
+        adminUsername: item.admin_username, targetUsername: item.target_username || '', createdAt: item.created_at
+      }))
+    };
+  }
+
+  async function adminSearchUsers(query) {
+    const q = String(query || '').trim().slice(0,40);
+    if (q.length < 2) return [];
+    const result = await pool.query(
+      `SELECT u.id, u.username, u.role, u.created_at, u.last_seen_at,
+              p.display_name, p.avatar, p.level, p.xp, p.tables_played, p.tables_won,
+              w.balance
+       FROM users u JOIN player_profiles p ON p.user_id=u.id JOIN wallets w ON w.user_id=u.id
+       WHERE u.username ILIKE $1 OR p.display_name ILIKE $1
+       ORDER BY CASE WHEN LOWER(u.username)=LOWER($2) THEN 0 ELSE 1 END, u.username
+       LIMIT 30`,
+      [`%${q}%`, q]
+    );
+    return result.rows.map(row => ({
+      id:Number(row.id), username:row.username, role:row.role||'player', isAdmin:row.role==='admin',
+      displayName:row.display_name, avatar:row.avatar, level:Number(row.level), xp:Number(row.xp),
+      bankroll:Number(row.balance), tablesPlayed:Number(row.tables_played), tablesWon:Number(row.tables_won),
+      createdAt:row.created_at, lastSeen:row.last_seen_at
+    }));
+  }
+
+  async function adminAdjustBankroll({ adminUserId, targetUserId, amount, reason }) {
+    amount = Math.trunc(Number(amount));
+    if (!Number.isFinite(amount) || amount === 0 || Math.abs(amount) > 1_000_000) throw new Error('Adjustment must be between -1,000,000 and 1,000,000 chips.');
+    const cleanReason = String(reason || '').replace(/[<>]/g,'').replace(/\s+/g,' ').trim().slice(0,120);
+    if (cleanReason.length < 4) throw new Error('Enter a clear reason for the adjustment.');
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
+      const target = await client.query(`SELECT u.id,u.username,w.balance FROM users u JOIN wallets w ON w.user_id=u.id WHERE u.id=$1 FOR UPDATE`, [targetUserId]);
+      if (!target.rowCount) throw new Error('Player account not found.');
+      const before = Number(target.rows[0].balance);
+      const after = before + amount;
+      if (after < 0) throw new Error('This adjustment would make the bankroll negative.');
+      await client.query('UPDATE wallets SET balance=$2,updated_at=NOW() WHERE user_id=$1', [targetUserId, after]);
+      await client.query(`INSERT INTO wallet_transactions(user_id,amount,balance_before,balance_after,reason)
+                          VALUES ($1,$2,$3,$4,'admin_adjustment')`, [targetUserId, amount, before, after]);
+      await client.query(`INSERT INTO admin_audit_log(admin_user_id,target_user_id,action,details)
+                          VALUES ($1,$2,'bankroll_adjustment',$3::jsonb)`, [adminUserId,targetUserId,JSON.stringify({amount,before,after,reason:cleanReason})]);
+      await client.query('COMMIT');
+      return { userId:Number(targetUserId), username:target.rows[0].username, amount, balanceBefore:before, balanceAfter:after };
+    } catch (err) {
+      try { await client.query('ROLLBACK'); } catch (_) {}
+      throw err;
+    } finally { client.release(); }
   }
 
   async function recentTransactions(userId, limit = 20) {
@@ -1031,6 +1141,11 @@ function createAccountStore({ databaseUrl, production = false } = {}) {
     sendTableInvite,
     respondTableInvite,
     socialSnapshot,
+    requireAdmin,
+    recordAdminAction,
+    adminOverview,
+    adminSearchUsers,
+    adminAdjustBankroll,
     recentTransactions,
     health,
     close: () => pool.end()
