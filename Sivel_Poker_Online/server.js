@@ -1369,7 +1369,7 @@ async function handleApi(req, res, pathname, url) {
     }
     if (req.method === 'GET' && pathname === '/api/health') {
       const database = await accounts.health();
-      return json(res, 200, { ok: true, version: 'admin-system-1', database: database.ok, rooms: rooms.size, publicTables: PUBLIC_TABLE_DEFINITIONS.length, now: Date.now() });
+      return json(res, 200, { ok: true, version: 'daily-spin-1', database: database.ok, rooms: rooms.size, publicTables: PUBLIC_TABLE_DEFINITIONS.length, now: Date.now() });
     }
     if (req.method === 'GET' && pathname === '/api/public-tables') {
       ensurePublicTables();
@@ -1379,6 +1379,11 @@ async function handleApi(req, res, pathname, url) {
     if (req.method === 'GET' && pathname === '/api/account') {
       const account = await accounts.requireAuth(authTokenFrom(req));
       return json(res, 200, { ok: true, account });
+    }
+    if (req.method === 'GET' && pathname === '/api/daily-spin') {
+      const account = await accounts.requireAuth(authTokenFrom(req));
+      const status = await accounts.dailySpinStatus(account.id);
+      return json(res, 200, { ok: true, status });
     }
     if (req.method === 'GET' && pathname === '/api/wallet/transactions') {
       const account = await accounts.requireAuth(authTokenFrom(req));
@@ -1507,6 +1512,18 @@ async function handleApi(req, res, pathname, url) {
       const account = await accounts.requireAuth(authTokenFrom(req, body));
       const updated = await accounts.updateProfile(account.id, body);
       return json(res, 200, { ok: true, account: updated });
+    }
+    if (pathname === '/api/daily-spin') {
+      const account = await accounts.requireAuth(authTokenFrom(req, body));
+      try {
+        const spin = await accounts.claimDailySpin(account.id);
+        return json(res, 200, { ok: true, spin });
+      } catch (err) {
+        if (err && err.code === 'DAILY_SPIN_COOLDOWN') {
+          return json(res, 409, { error: err.message, nextSpinAt: err.nextSpinAt });
+        }
+        throw err;
+      }
     }
 
     if (pathname === '/api/admin/announcement') {
