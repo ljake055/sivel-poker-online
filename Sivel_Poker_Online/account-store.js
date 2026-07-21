@@ -8,11 +8,29 @@ const scrypt = promisify(crypto.scrypt);
 const SESSION_DAYS = 30;
 const STARTING_BANKROLL = 10_000;
 const USERNAME_RE = /^[A-Za-z0-9_]{3,18}$/;
+const BIO_MAX_LENGTH = 280;
+const DM_MAX_LENGTH = 500;
 const AVATARS = new Set(['🕶️','🦊','🐺','🦁','🐉','👑','⚡','🎯','🃏','🤖','👻','🧙‍♂️','🦅','🔥','💎','🥷']);
 
 function cleanDisplayName(value, fallback = 'Player') {
   const name = String(value || '').replace(/[<>]/g, '').replace(/\s+/g, ' ').trim().slice(0, 18);
   return name || fallback;
+}
+
+function cleanBio(value) {
+  return String(value || '')
+    .replace(/[\u0000-\u001F\u007F\u202A-\u202E\u2066-\u2069]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .slice(0, BIO_MAX_LENGTH);
+}
+
+function cleanDirectMessage(value) {
+  return String(value || '')
+    .replace(/[\u0000-\u001F\u007F\u202A-\u202E\u2066-\u2069]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .slice(0, DM_MAX_LENGTH);
 }
 
 function cleanAvatar(value) {
@@ -141,9 +159,81 @@ function createAccountStore({ databaseUrl, production = false } = {}) {
       CREATE INDEX IF NOT EXISTS table_sessions_user_idx ON table_sessions(user_id, created_at DESC);
       CREATE UNIQUE INDEX IF NOT EXISTS table_sessions_active_user_table_idx
         ON table_sessions(table_id, user_id) WHERE status = 'active';
+
+      ALTER TABLE player_profiles ADD COLUMN IF NOT EXISTS bio VARCHAR(280) NOT NULL DEFAULT '';
+      ALTER TABLE users ADD COLUMN IF NOT EXISTS last_seen_at TIMESTAMPTZ;
+
+      CREATE TABLE IF NOT EXISTS friendships (
+        user_id_low BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        user_id_high BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        PRIMARY KEY (user_id_low, user_id_high),
+        CHECK (user_id_low < user_id_high)
+      );
+      CREATE INDEX IF NOT EXISTS friendships_low_idx ON friendships(user_id_low);
+      CREATE INDEX IF NOT EXISTS friendships_high_idx ON friendships(user_id_high);
+
+      CREATE TABLE IF NOT EXISTS friend_requests (
+        id BIGSERIAL PRIMARY KEY,
+        sender_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        receiver_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        status VARCHAR(16) NOT NULL DEFAULT 'pending',
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        responded_at TIMESTAMPTZ,
+        CHECK (sender_id <> receiver_id),
+        CHECK (status IN ('pending','accepted','declined','cancelled'))
+      );
+      CREATE UNIQUE INDEX IF NOT EXISTS friend_requests_pending_pair_idx
+        ON friend_requests(sender_id, receiver_id) WHERE status = 'pending';
+      CREATE INDEX IF NOT EXISTS friend_requests_receiver_idx
+        ON friend_requests(receiver_id, status, created_at DESC);
+
+      CREATE TABLE IF NOT EXISTS user_blocks (
+        blocker_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        blocked_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        PRIMARY KEY (blocker_id, blocked_id),
+        CHECK (blocker_id <> blocked_id)
+      );
+
+      CREATE TABLE IF NOT EXISTS direct_messages (
+        id BIGSERIAL PRIMARY KEY,
+        sender_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        receiver_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        body VARCHAR(500) NOT NULL,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        read_at TIMESTAMPTZ,
+        CHECK (sender_id <> receiver_id)
+      );
+      CREATE INDEX IF NOT EXISTS direct_messages_conversation_idx
+        ON direct_messages(sender_id, receiver_id, created_at DESC);
+      CREATE INDEX IF NOT EXISTS direct_messages_unread_idx
+        ON direct_messages(receiver_id, read_at, created_at DESC);
+
+      CREATE TABLE IF NOT EXISTS table_invites (
+        id UUID PRIMARY KEY,
+        inviter_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        invitee_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        target_type VARCHAR(12) NOT NULL,
+        table_id VARCHAR(32),
+        room_code VARCHAR(8),
+        table_name VARCHAR(80) NOT NULL,
+        status VARCHAR(16) NOT NULL DEFAULT 'pending',
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        expires_at TIMESTAMPTZ NOT NULL,
+        responded_at TIMESTAMPTZ,
+        CHECK (inviter_id <> invitee_id),
+        CHECK (target_type IN ('public','private')),
+        CHECK (status IN ('pending','accepted','declined','expired','cancelled'))
+      );
+      CREATE INDEX IF NOT EXISTS table_invites_invitee_idx
+        ON table_invites(invitee_id, status, created_at DESC);
+
     `);
 
     await pool.query('DELETE FROM auth_sessions WHERE expires_at <= NOW()');
+    await pool.query(`UPDATE table_invites SET status = 'expired', responded_at = NOW()
+                      WHERE status = 'pending' AND expires_at <= NOW()`);
   }
 
   async function createSession(client, userId) {
@@ -159,7 +249,7 @@ function createAccountStore({ databaseUrl, production = false } = {}) {
   async function accountById(client, userId) {
     const result = await client.query(
       `SELECT u.id, u.username, u.created_at,
-              p.display_name, p.avatar, p.xp, p.level,
+              p.display_name, p.avatar, p.bio, p.xp, p.level,
               p.tables_played, p.tables_won, p.hands_played, p.hands_won,
               p.biggest_pot, p.achievements,
               w.balance
@@ -176,6 +266,7 @@ function createAccountStore({ databaseUrl, production = false } = {}) {
       username: row.username,
       displayName: row.display_name,
       avatar: row.avatar,
+      bio: row.bio || '',
       bankroll: Number(row.balance),
       xp: Number(row.xp),
       level: Number(row.level),
@@ -279,14 +370,17 @@ function createAccountStore({ databaseUrl, production = false } = {}) {
     if (rawToken) await pool.query('DELETE FROM auth_sessions WHERE token_hash = $1', [tokenHash(rawToken)]);
   }
 
-  async function updateProfile(userId, { displayName, avatar }) {
+  async function updateProfile(userId, { displayName, avatar, bio } = {}) {
     const account = await accountById(pool, userId);
     if (!account) throw new Error('Account not found.');
-    const display = cleanDisplayName(displayName, account.username);
-    const safeAvatar = cleanAvatar(avatar);
+    const display = displayName === undefined ? account.displayName : cleanDisplayName(displayName, account.username);
+    const safeAvatar = avatar === undefined ? account.avatar : cleanAvatar(avatar);
+    const safeBio = bio === undefined ? account.bio : cleanBio(bio);
     await pool.query(
-      `UPDATE player_profiles SET display_name = $2, avatar = $3, updated_at = NOW() WHERE user_id = $1`,
-      [userId, display, safeAvatar]
+      `UPDATE player_profiles
+       SET display_name = $2, avatar = $3, bio = $4, updated_at = NOW()
+       WHERE user_id = $1`,
+      [userId, display, safeAvatar, safeBio]
     );
     return accountById(pool, userId);
   }
@@ -508,6 +602,384 @@ function createAccountStore({ databaseUrl, production = false } = {}) {
     }
   }
 
+
+  function orderedPair(a, b) {
+    const first = BigInt(a), second = BigInt(b);
+    return first < second ? [String(first), String(second)] : [String(second), String(first)];
+  }
+
+  async function touchUser(userId) {
+    await pool.query('UPDATE users SET last_seen_at = NOW() WHERE id = $1', [userId]);
+  }
+
+  async function friendIds(userId) {
+    const result = await pool.query(
+      `SELECT CASE WHEN user_id_low = $1 THEN user_id_high ELSE user_id_low END AS friend_id
+       FROM friendships WHERE user_id_low = $1 OR user_id_high = $1`,
+      [userId]
+    );
+    return result.rows.map(row => Number(row.friend_id));
+  }
+
+  async function areFriends(userId, otherId, client = pool) {
+    const [low, high] = orderedPair(userId, otherId);
+    const result = await client.query(
+      'SELECT 1 FROM friendships WHERE user_id_low = $1 AND user_id_high = $2',
+      [low, high]
+    );
+    return result.rowCount > 0;
+  }
+
+  async function blockExists(userId, otherId, client = pool) {
+    const result = await client.query(
+      `SELECT 1 FROM user_blocks
+       WHERE (blocker_id = $1 AND blocked_id = $2) OR (blocker_id = $2 AND blocked_id = $1)`,
+      [userId, otherId]
+    );
+    return result.rowCount > 0;
+  }
+
+  function mapSocialUser(row) {
+    return {
+      id: Number(row.id),
+      username: row.username,
+      displayName: row.display_name,
+      avatar: row.avatar,
+      bio: row.bio || '',
+      level: Number(row.level || 1),
+      xp: Number(row.xp || 0),
+      tablesPlayed: Number(row.tables_played || 0),
+      tablesWon: Number(row.tables_won || 0),
+      handsPlayed: Number(row.hands_played || 0),
+      handsWon: Number(row.hands_won || 0),
+      biggestPot: Number(row.biggest_pot || 0),
+      lastSeen: row.last_seen_at || null
+    };
+  }
+
+  async function publicProfile(viewerId, targetId) {
+    const result = await pool.query(
+      `SELECT u.id, u.username, u.last_seen_at,
+              p.display_name, p.avatar, p.bio, p.level, p.xp,
+              p.tables_played, p.tables_won, p.hands_played, p.hands_won, p.biggest_pot
+       FROM users u JOIN player_profiles p ON p.user_id = u.id
+       WHERE u.id = $1`,
+      [targetId]
+    );
+    if (!result.rowCount) throw new Error('Player not found.');
+    const user = mapSocialUser(result.rows[0]);
+    const [friends, blocks, incoming, outgoing] = await Promise.all([
+      areFriends(viewerId, targetId),
+      blockExists(viewerId, targetId),
+      pool.query(`SELECT id FROM friend_requests WHERE sender_id = $1 AND receiver_id = $2 AND status = 'pending'`, [targetId, viewerId]),
+      pool.query(`SELECT id FROM friend_requests WHERE sender_id = $1 AND receiver_id = $2 AND status = 'pending'`, [viewerId, targetId])
+    ]);
+    const blockedByMe = await pool.query('SELECT 1 FROM user_blocks WHERE blocker_id = $1 AND blocked_id = $2', [viewerId, targetId]);
+    return {
+      ...user,
+      isSelf: Number(viewerId) === Number(targetId),
+      isFriend: friends,
+      blocked: blocks,
+      blockedByMe: blockedByMe.rowCount > 0,
+      incomingRequestId: incoming.rowCount ? Number(incoming.rows[0].id) : null,
+      outgoingRequestId: outgoing.rowCount ? Number(outgoing.rows[0].id) : null
+    };
+  }
+
+  async function searchUsers(userId, query) {
+    const q = String(query || '').trim().slice(0, 40);
+    if (q.length < 2) return [];
+    const result = await pool.query(
+      `SELECT u.id, u.username, u.last_seen_at,
+              p.display_name, p.avatar, p.bio, p.level, p.xp,
+              p.tables_played, p.tables_won, p.hands_played, p.hands_won, p.biggest_pot,
+              EXISTS(
+                SELECT 1 FROM friendships f
+                WHERE (f.user_id_low = $1 AND f.user_id_high = u.id)
+                   OR (f.user_id_high = $1 AND f.user_id_low = u.id)
+              ) AS is_friend,
+              EXISTS(SELECT 1 FROM user_blocks b WHERE b.blocker_id = $1 AND b.blocked_id = u.id) AS blocked_by_me,
+              (SELECT fr.id FROM friend_requests fr WHERE fr.sender_id = $1 AND fr.receiver_id = u.id AND fr.status = 'pending' LIMIT 1) AS outgoing_request_id,
+              (SELECT fr.id FROM friend_requests fr WHERE fr.sender_id = u.id AND fr.receiver_id = $1 AND fr.status = 'pending' LIMIT 1) AS incoming_request_id
+       FROM users u JOIN player_profiles p ON p.user_id = u.id
+       WHERE u.id <> $1
+         AND NOT EXISTS(SELECT 1 FROM user_blocks b WHERE b.blocker_id = u.id AND b.blocked_id = $1)
+         AND (u.username ILIKE $2 OR p.display_name ILIKE $2)
+       ORDER BY CASE WHEN LOWER(u.username) = LOWER($3) THEN 0 ELSE 1 END,
+                p.tables_won DESC, u.username
+       LIMIT 20`,
+      [userId, `%${q}%`, q]
+    );
+    return result.rows.map(row => ({
+      ...mapSocialUser(row),
+      isFriend: !!row.is_friend,
+      blockedByMe: !!row.blocked_by_me,
+      outgoingRequestId: row.outgoing_request_id ? Number(row.outgoing_request_id) : null,
+      incomingRequestId: row.incoming_request_id ? Number(row.incoming_request_id) : null
+    }));
+  }
+
+  async function sendFriendRequest(senderId, receiverId) {
+    receiverId = Number(receiverId);
+    if (!receiverId || Number(senderId) === receiverId) throw new Error('Choose another player.');
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
+      const target = await client.query('SELECT id FROM users WHERE id = $1', [receiverId]);
+      if (!target.rowCount) throw new Error('Player not found.');
+      if (await blockExists(senderId, receiverId, client)) throw new Error('A block prevents this friend request.');
+      if (await areFriends(senderId, receiverId, client)) throw new Error('You are already friends.');
+      const reverse = await client.query(
+        `SELECT id FROM friend_requests
+         WHERE sender_id = $1 AND receiver_id = $2 AND status = 'pending' FOR UPDATE`,
+        [receiverId, senderId]
+      );
+      if (reverse.rowCount) {
+        const [low, high] = orderedPair(senderId, receiverId);
+        await client.query(`INSERT INTO friendships(user_id_low, user_id_high) VALUES ($1,$2) ON CONFLICT DO NOTHING`, [low, high]);
+        await client.query(`UPDATE friend_requests SET status = 'accepted', responded_at = NOW() WHERE id = $1`, [reverse.rows[0].id]);
+        await client.query('COMMIT');
+        return { accepted: true, requestId: Number(reverse.rows[0].id), targetId: receiverId };
+      }
+      const existing = await client.query(
+        `SELECT id FROM friend_requests WHERE sender_id = $1 AND receiver_id = $2 AND status = 'pending'`,
+        [senderId, receiverId]
+      );
+      if (existing.rowCount) throw new Error('Friend request already sent.');
+      const inserted = await client.query(
+        `INSERT INTO friend_requests(sender_id, receiver_id) VALUES ($1,$2) RETURNING id`,
+        [senderId, receiverId]
+      );
+      await client.query('COMMIT');
+      return { accepted: false, requestId: Number(inserted.rows[0].id), targetId: receiverId };
+    } catch (err) {
+      await client.query('ROLLBACK');
+      throw err;
+    } finally { client.release(); }
+  }
+
+  async function respondFriendRequest(userId, requestId, action) {
+    if (!['accept','decline'].includes(action)) throw new Error('Invalid friend request action.');
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
+      const result = await client.query(
+        `SELECT * FROM friend_requests WHERE id = $1 AND receiver_id = $2 AND status = 'pending' FOR UPDATE`,
+        [requestId, userId]
+      );
+      if (!result.rowCount) throw new Error('Friend request is no longer available.');
+      const row = result.rows[0];
+      if (action === 'accept') {
+        if (await blockExists(row.sender_id, row.receiver_id, client)) throw new Error('A block prevents this friendship.');
+        const [low, high] = orderedPair(row.sender_id, row.receiver_id);
+        await client.query(`INSERT INTO friendships(user_id_low, user_id_high) VALUES ($1,$2) ON CONFLICT DO NOTHING`, [low, high]);
+      }
+      await client.query(
+        `UPDATE friend_requests SET status = $2, responded_at = NOW() WHERE id = $1`,
+        [requestId, action === 'accept' ? 'accepted' : 'declined']
+      );
+      await client.query('COMMIT');
+      return { senderId: Number(row.sender_id), receiverId: Number(row.receiver_id), accepted: action === 'accept' };
+    } catch (err) { await client.query('ROLLBACK'); throw err; }
+    finally { client.release(); }
+  }
+
+  async function cancelFriendRequest(userId, requestId) {
+    const result = await pool.query(
+      `UPDATE friend_requests SET status = 'cancelled', responded_at = NOW()
+       WHERE id = $1 AND sender_id = $2 AND status = 'pending' RETURNING receiver_id`,
+      [requestId, userId]
+    );
+    if (!result.rowCount) throw new Error('Friend request is no longer available.');
+    return Number(result.rows[0].receiver_id);
+  }
+
+  async function removeFriend(userId, otherId) {
+    const [low, high] = orderedPair(userId, otherId);
+    const result = await pool.query(
+      `DELETE FROM friendships WHERE user_id_low = $1 AND user_id_high = $2`,
+      [low, high]
+    );
+    if (!result.rowCount) throw new Error('That player is not on your friends list.');
+  }
+
+  async function blockUser(userId, otherId) {
+    if (Number(userId) === Number(otherId)) throw new Error('You cannot block yourself.');
+    const [low, high] = orderedPair(userId, otherId);
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
+      await client.query(`INSERT INTO user_blocks(blocker_id, blocked_id) VALUES ($1,$2) ON CONFLICT DO NOTHING`, [userId, otherId]);
+      await client.query(`DELETE FROM friendships WHERE user_id_low = $1 AND user_id_high = $2`, [low, high]);
+      await client.query(
+        `UPDATE friend_requests SET status = 'cancelled', responded_at = NOW()
+         WHERE status = 'pending' AND ((sender_id=$1 AND receiver_id=$2) OR (sender_id=$2 AND receiver_id=$1))`,
+        [userId, otherId]
+      );
+      await client.query(
+        `UPDATE table_invites SET status = 'cancelled', responded_at = NOW()
+         WHERE status = 'pending' AND ((inviter_id=$1 AND invitee_id=$2) OR (inviter_id=$2 AND invitee_id=$1))`,
+        [userId, otherId]
+      );
+      await client.query('COMMIT');
+    } catch (err) { await client.query('ROLLBACK'); throw err; }
+    finally { client.release(); }
+  }
+
+  async function unblockUser(userId, otherId) {
+    await pool.query('DELETE FROM user_blocks WHERE blocker_id = $1 AND blocked_id = $2', [userId, otherId]);
+  }
+
+  async function sendDirectMessage(senderId, receiverId, body) {
+    const text = cleanDirectMessage(body);
+    if (!text) throw new Error('Enter a message first.');
+    if (!(await areFriends(senderId, receiverId))) throw new Error('You can only message friends.');
+    if (await blockExists(senderId, receiverId)) throw new Error('A block prevents this message.');
+    const result = await pool.query(
+      `INSERT INTO direct_messages(sender_id, receiver_id, body)
+       VALUES ($1,$2,$3) RETURNING id, created_at`,
+      [senderId, receiverId, text]
+    );
+    return { id: Number(result.rows[0].id), senderId: Number(senderId), receiverId: Number(receiverId), text, createdAt: result.rows[0].created_at };
+  }
+
+  async function conversation(userId, otherId, limit = 100) {
+    if (!(await areFriends(userId, otherId))) throw new Error('You can only message friends.');
+    limit = Math.max(1, Math.min(150, Math.floor(Number(limit) || 100)));
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
+      const result = await client.query(
+        `SELECT id, sender_id, receiver_id, body, created_at, read_at
+         FROM direct_messages
+         WHERE (sender_id=$1 AND receiver_id=$2) OR (sender_id=$2 AND receiver_id=$1)
+         ORDER BY created_at DESC LIMIT $3`,
+        [userId, otherId, limit]
+      );
+      await client.query(
+        `UPDATE direct_messages SET read_at = NOW()
+         WHERE sender_id=$2 AND receiver_id=$1 AND read_at IS NULL`,
+        [userId, otherId]
+      );
+      await client.query('COMMIT');
+      return result.rows.reverse().map(row => ({
+        id: Number(row.id), senderId: Number(row.sender_id), receiverId: Number(row.receiver_id),
+        text: row.body, createdAt: row.created_at, readAt: row.read_at, isSelf: Number(row.sender_id) === Number(userId)
+      }));
+    } catch (err) { await client.query('ROLLBACK'); throw err; }
+    finally { client.release(); }
+  }
+
+  async function sendTableInvite({ inviterId, inviteeId, targetType, tableId = null, roomCode = null, tableName }) {
+    if (!(await areFriends(inviterId, inviteeId))) throw new Error('You can only invite friends.');
+    if (await blockExists(inviterId, inviteeId)) throw new Error('A block prevents this invitation.');
+    await pool.query(
+      `UPDATE table_invites SET status = 'expired', responded_at = NOW()
+       WHERE status = 'pending' AND expires_at <= NOW()`
+    );
+    const recent = await pool.query(
+      `SELECT COUNT(*)::int AS count FROM table_invites
+       WHERE inviter_id=$1 AND invitee_id=$2 AND created_at > NOW() - INTERVAL '2 minutes'`,
+      [inviterId, inviteeId]
+    );
+    if (Number(recent.rows[0].count) >= 3) throw new Error('Please wait before sending another invitation.');
+    const id = crypto.randomUUID();
+    await pool.query(
+      `INSERT INTO table_invites(id, inviter_id, invitee_id, target_type, table_id, room_code, table_name, expires_at)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,NOW() + INTERVAL '15 minutes')`,
+      [id, inviterId, inviteeId, targetType, tableId, roomCode, String(tableName || 'Sivel Poker Table').slice(0,80)]
+    );
+    return { id, inviteeId: Number(inviteeId) };
+  }
+
+  async function respondTableInvite(userId, inviteId, action) {
+    if (!['accept','decline'].includes(action)) throw new Error('Invalid invitation action.');
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
+      const result = await client.query(
+        `SELECT i.*, u.username, p.display_name, p.avatar
+         FROM table_invites i
+         JOIN users u ON u.id=i.inviter_id JOIN player_profiles p ON p.user_id=u.id
+         WHERE i.id=$1 AND i.invitee_id=$2 AND i.status='pending' FOR UPDATE`,
+        [inviteId, userId]
+      );
+      if (!result.rowCount) throw new Error('This invitation is no longer available.');
+      const row = result.rows[0];
+      if (new Date(row.expires_at).getTime() <= Date.now()) {
+        await client.query(`UPDATE table_invites SET status='expired', responded_at=NOW() WHERE id=$1`, [inviteId]);
+        await client.query('COMMIT');
+        throw new Error('This invitation has expired.');
+      }
+      await client.query(
+        `UPDATE table_invites SET status=$2, responded_at=NOW() WHERE id=$1`,
+        [inviteId, action === 'accept' ? 'accepted' : 'declined']
+      );
+      await client.query('COMMIT');
+      return {
+        id: row.id, inviterId: Number(row.inviter_id), inviteeId: Number(row.invitee_id),
+        inviterName: row.display_name, inviterAvatar: row.avatar,
+        targetType: row.target_type, tableId: row.table_id, roomCode: row.room_code,
+        tableName: row.table_name, accepted: action === 'accept'
+      };
+    } catch (err) { try { await client.query('ROLLBACK'); } catch (_) {} throw err; }
+    finally { client.release(); }
+  }
+
+  async function socialSnapshot(userId) {
+    await pool.query(`UPDATE table_invites SET status='expired', responded_at=NOW() WHERE status='pending' AND expires_at <= NOW()`);
+    const [friendsResult, incomingResult, outgoingResult, invitesResult, blockedResult, account] = await Promise.all([
+      pool.query(
+        `WITH friend_ids AS (
+           SELECT CASE WHEN user_id_low=$1 THEN user_id_high ELSE user_id_low END AS friend_id, created_at
+           FROM friendships WHERE user_id_low=$1 OR user_id_high=$1
+         )
+         SELECT u.id, u.username, u.last_seen_at, p.display_name, p.avatar, p.bio, p.level, p.xp,
+                p.tables_played, p.tables_won, p.hands_played, p.hands_won, p.biggest_pot,
+                f.created_at AS friends_since,
+                (SELECT COUNT(*)::int FROM direct_messages dm WHERE dm.sender_id=u.id AND dm.receiver_id=$1 AND dm.read_at IS NULL) AS unread_count,
+                (SELECT dm.body FROM direct_messages dm WHERE (dm.sender_id=$1 AND dm.receiver_id=u.id) OR (dm.sender_id=u.id AND dm.receiver_id=$1) ORDER BY dm.created_at DESC LIMIT 1) AS last_message,
+                (SELECT dm.created_at FROM direct_messages dm WHERE (dm.sender_id=$1 AND dm.receiver_id=u.id) OR (dm.sender_id=u.id AND dm.receiver_id=$1) ORDER BY dm.created_at DESC LIMIT 1) AS last_message_at
+         FROM friend_ids f JOIN users u ON u.id=f.friend_id JOIN player_profiles p ON p.user_id=u.id
+         ORDER BY COALESCE((SELECT dm.created_at FROM direct_messages dm WHERE (dm.sender_id=$1 AND dm.receiver_id=u.id) OR (dm.sender_id=u.id AND dm.receiver_id=$1) ORDER BY dm.created_at DESC LIMIT 1), f.created_at) DESC`,
+        [userId]
+      ),
+      pool.query(
+        `SELECT fr.id, fr.created_at, u.id AS user_id, u.username, u.last_seen_at, p.display_name, p.avatar, p.bio, p.level
+         FROM friend_requests fr JOIN users u ON u.id=fr.sender_id JOIN player_profiles p ON p.user_id=u.id
+         WHERE fr.receiver_id=$1 AND fr.status='pending' ORDER BY fr.created_at DESC`, [userId]),
+      pool.query(
+        `SELECT fr.id, fr.created_at, u.id AS user_id, u.username, u.last_seen_at, p.display_name, p.avatar, p.bio, p.level
+         FROM friend_requests fr JOIN users u ON u.id=fr.receiver_id JOIN player_profiles p ON p.user_id=u.id
+         WHERE fr.sender_id=$1 AND fr.status='pending' ORDER BY fr.created_at DESC`, [userId]),
+      pool.query(
+        `SELECT i.id, i.target_type, i.table_id, i.room_code, i.table_name, i.created_at, i.expires_at,
+                u.id AS inviter_id, u.username, p.display_name, p.avatar
+         FROM table_invites i JOIN users u ON u.id=i.inviter_id JOIN player_profiles p ON p.user_id=u.id
+         WHERE i.invitee_id=$1 AND i.status='pending' AND i.expires_at>NOW() ORDER BY i.created_at DESC`, [userId]),
+      pool.query(
+        `SELECT u.id, u.username, u.last_seen_at, p.display_name, p.avatar, p.bio, p.level
+         FROM user_blocks b JOIN users u ON u.id=b.blocked_id JOIN player_profiles p ON p.user_id=u.id
+         WHERE b.blocker_id=$1 ORDER BY b.created_at DESC`, [userId]),
+      accountById(pool, userId)
+    ]);
+    return {
+      account,
+      friends: friendsResult.rows.map(row => ({
+        ...mapSocialUser(row), friendsSince: row.friends_since,
+        unreadCount: Number(row.unread_count || 0), lastMessage: row.last_message || '', lastMessageAt: row.last_message_at || null
+      })),
+      incomingRequests: incomingResult.rows.map(row => ({ id:Number(row.id), createdAt:row.created_at, user:{...mapSocialUser({...row,id:row.user_id}), level:Number(row.level||1)} })),
+      outgoingRequests: outgoingResult.rows.map(row => ({ id:Number(row.id), createdAt:row.created_at, user:{...mapSocialUser({...row,id:row.user_id}), level:Number(row.level||1)} })),
+      invites: invitesResult.rows.map(row => ({
+        id:row.id, targetType:row.target_type, tableId:row.table_id, roomCode:row.room_code,
+        tableName:row.table_name, createdAt:row.created_at, expiresAt:row.expires_at,
+        inviter:{id:Number(row.inviter_id), username:row.username, displayName:row.display_name, avatar:row.avatar}
+      })),
+      blocked: blockedResult.rows.map(row => mapSocialUser(row))
+    };
+  }
+
   async function recentTransactions(userId, limit = 20) {
     limit = Math.max(1, Math.min(50, Math.floor(Number(limit) || 20)));
     const result = await pool.query(
@@ -544,10 +1016,25 @@ function createAccountStore({ databaseUrl, production = false } = {}) {
     refundTable,
     recoverInterruptedTables,
     settleTable,
+    touchUser,
+    friendIds,
+    publicProfile,
+    searchUsers,
+    sendFriendRequest,
+    respondFriendRequest,
+    cancelFriendRequest,
+    removeFriend,
+    blockUser,
+    unblockUser,
+    sendDirectMessage,
+    conversation,
+    sendTableInvite,
+    respondTableInvite,
+    socialSnapshot,
     recentTransactions,
     health,
     close: () => pool.end()
   };
 }
 
-module.exports = { createAccountStore, cleanDisplayName, cleanAvatar };
+module.exports = { createAccountStore, cleanDisplayName, cleanAvatar, cleanBio, cleanDirectMessage };
