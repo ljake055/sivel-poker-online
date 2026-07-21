@@ -615,10 +615,9 @@ body.multiplayer-open{overflow:hidden}
 
 
 
-/* Live Casino Floor: use the exact in-game Sivel Poker card-back design.
-   Animation timing, positions, paths, and chip motion remain unchanged. */
-.lobby-motion .mini-deck i,
-.lobby-motion .flying-card{
+/* Live Casino Floor: update only the existing deck backs.
+   The animated A♠, K♥, and Q♣ remain face up; timing, paths, chips, and pot are unchanged. */
+.lobby-motion .mini-deck i{
   overflow:hidden;
   background:
     radial-gradient(circle at 50% 42%,#3376b9 0 16%,transparent 17%),
@@ -628,8 +627,7 @@ body.multiplayer-open{overflow:hidden}
   border:3px solid #f6e8bd !important;
   box-shadow:inset 0 0 0 2px #1a4f86,0 10px 20px #0008 !important;
 }
-.lobby-motion .mini-deck i::before,
-.lobby-motion .flying-card::before{
+.lobby-motion .mini-deck i::before{
   content:"♠";
   position:absolute;
   inset:4px;
@@ -644,8 +642,7 @@ body.multiplayer-open{overflow:hidden}
   line-height:1;
   text-shadow:0 1px 4px #000;
 }
-.lobby-motion .mini-deck i::after,
-.lobby-motion .flying-card::after{
+.lobby-motion .mini-deck i::after{
   content:"SIVEL\A POKER";
   white-space:pre;
   position:absolute;
