@@ -613,6 +613,54 @@ body.multiplayer-open{overflow:hidden}
 .profile-view-card{display:grid;gap:9px}.profile-view-row{display:flex;justify-content:space-between;gap:12px;padding:10px 11px;border-radius:11px;background:#0e1924;border:1px solid #223448}.profile-view-row span{color:#8ea2b7;font-size:11px}.profile-view-row strong{font-size:12px;text-align:right}.profile-save-note{min-height:18px;color:#6ee3a0;font-size:11px;margin-top:10px}
 @media(max-width:650px){.profile-edit-layout{grid-template-columns:1fr}.avatar-grid{grid-template-columns:repeat(4,1fr)}}
 
+
+
+/* Live Casino Floor: use the exact in-game Sivel Poker card-back design.
+   Animation timing, positions, paths, and chip motion remain unchanged. */
+.lobby-motion .mini-deck i,
+.lobby-motion .flying-card{
+  overflow:hidden;
+  background:
+    radial-gradient(circle at 50% 42%,#3376b9 0 16%,transparent 17%),
+    repeating-linear-gradient(45deg,#071b34 0 5px,#123b6d 5px 10px,#0b274b 10px 15px) !important;
+  color:transparent !important;
+  font-size:0 !important;
+  border:3px solid #f6e8bd !important;
+  box-shadow:inset 0 0 0 2px #1a4f86,0 10px 20px #0008 !important;
+}
+.lobby-motion .mini-deck i::before,
+.lobby-motion .flying-card::before{
+  content:"♠";
+  position:absolute;
+  inset:4px;
+  border:1px solid #d9b65dcc;
+  border-radius:4px;
+  display:grid;
+  place-items:center;
+  padding-bottom:10px;
+  color:#eac86d88;
+  font-family:Georgia,serif;
+  font-size:26px;
+  line-height:1;
+  text-shadow:0 1px 4px #000;
+}
+.lobby-motion .mini-deck i::after,
+.lobby-motion .flying-card::after{
+  content:"SIVEL\A POKER";
+  white-space:pre;
+  position:absolute;
+  left:3px;
+  right:3px;
+  bottom:8px;
+  text-align:center;
+  color:#fff4cf;
+  font-family:Georgia,serif;
+  font-size:7px;
+  font-weight:1000;
+  line-height:1.05;
+  letter-spacing:.07em;
+  text-shadow:0 1px 3px #000;
+}
 </style>
 </head>
 <body>
