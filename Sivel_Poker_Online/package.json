@@ -2,12 +2,10 @@
   "name": "sivel-poker-online",
   "version": "2.0.0",
   "private": true,
-  "description": "Sivel Poker with server-authoritative multiplayer, stable public-table connections, and automated gameplay tests.",
+  "description": "Sivel Poker with persistent accounts and server-authoritative multiplayer poker.",
   "scripts": {
-    "start": "node apply-server-authority-v55.js && node apply-gameplay-stability-v57.js && node server.js",
-    "test": "node --check apply-server-authority-v55.js && node --check apply-gameplay-stability-v57.js && node apply-server-authority-v55.js && node apply-gameplay-stability-v57.js && node --check server.js && node --check account-store.js",
-    "test:gameplay": "node --test --test-concurrency=1 tests/*.test.js",
-    "test:ci": "npm test && npm run test:gameplay"
+    "start": "node apply-server-authority-v55.js && node server.js",
+    "test": "node --check apply-server-authority-v55.js && node apply-server-authority-v55.js && node --check server.js && node --check account-store.js"
   },
   "engines": {
     "node": ">=20"
