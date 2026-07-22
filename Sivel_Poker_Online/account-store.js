@@ -16,6 +16,21 @@ const DAILY_SPIN_COOLDOWN_MS = 24 * 60 * 60 * 1000;
 const DAILY_SPIN_REWARDS = Object.freeze([100, 150, 200, 250, 300, 500, 750, 1500]);
 function roleForUsername(username) { return ADMIN_USERNAME_KEYS.has(String(username || '').trim().toLowerCase()) ? 'admin' : 'player'; }
 
+function isOwnerUsername(username) {
+  return ADMIN_USERNAME_KEYS.has(String(username || '').trim().toLowerCase());
+}
+
+function cleanAdminReason(value, fallback = '') {
+  const text = String(value || '').replace(/[<>]/g, '').replace(/[\u0000-\u001F\u007F\u202A-\u202E\u2066-\u2069]/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 180);
+  return text || fallback;
+}
+
+function durationUntil(minutes) {
+  const value = Number(minutes);
+  if (!Number.isFinite(value) || value <= 0) return null;
+  return new Date(Date.now() + Math.min(5_256_000, Math.floor(value)) * 60_000);
+}
+
 function cleanDisplayName(value, fallback = 'Player') {
   const name = String(value || '').replace(/[<>]/g, '').replace(/\s+/g, ' ').trim().slice(0, 18);
   return name || fallback;
@@ -255,6 +270,24 @@ function createAccountStore({ databaseUrl, production = false } = {}) {
       );
       CREATE INDEX IF NOT EXISTS admin_audit_created_idx ON admin_audit_log(created_at DESC);
 
+      ALTER TABLE users ADD COLUMN IF NOT EXISTS account_status VARCHAR(16) NOT NULL DEFAULT 'active';
+      ALTER TABLE users ADD COLUMN IF NOT EXISTS suspended_until TIMESTAMPTZ;
+      ALTER TABLE users ADD COLUMN IF NOT EXISTS suspension_reason VARCHAR(180) NOT NULL DEFAULT '';
+      ALTER TABLE users ADD COLUMN IF NOT EXISTS chat_muted BOOLEAN NOT NULL DEFAULT FALSE;
+      ALTER TABLE users ADD COLUMN IF NOT EXISTS chat_muted_until TIMESTAMPTZ;
+      ALTER TABLE users ADD COLUMN IF NOT EXISTS chat_mute_reason VARCHAR(180) NOT NULL DEFAULT '';
+      ALTER TABLE users ADD COLUMN IF NOT EXISTS admin_notes TEXT NOT NULL DEFAULT '';
+
+      CREATE TABLE IF NOT EXISTS admin_settings (
+        setting_key VARCHAR(40) PRIMARY KEY,
+        value JSONB NOT NULL DEFAULT '{}'::jsonb,
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        updated_by BIGINT REFERENCES users(id) ON DELETE SET NULL
+      );
+      INSERT INTO admin_settings(setting_key, value)
+      VALUES ('platform', '{"registrationsOpen":true}'::jsonb)
+      ON CONFLICT (setting_key) DO NOTHING;
+
     `);
 
     for (const usernameKey of ADMIN_USERNAME_KEYS) {
@@ -277,7 +310,8 @@ function createAccountStore({ databaseUrl, production = false } = {}) {
 
   async function accountById(client, userId) {
     const result = await client.query(
-      `SELECT u.id, u.username, u.created_at, u.role,
+      `SELECT u.id, u.username, u.username_key, u.created_at, u.role, u.account_status, u.suspended_until, u.suspension_reason,
+              u.chat_muted, u.chat_muted_until, u.chat_mute_reason,
               p.display_name, p.avatar, p.bio, p.xp, p.level,
               p.tables_played, p.tables_won, p.hands_played, p.hands_won,
               p.biggest_pot, p.achievements,
@@ -307,6 +341,13 @@ function createAccountStore({ databaseUrl, production = false } = {}) {
       username: row.username,
       role: row.role || 'player',
       isAdmin: row.role === 'admin',
+      isOwner: isOwnerUsername(row.username_key || row.username),
+      accountStatus: row.account_status || 'active',
+      suspendedUntil: row.suspended_until ? new Date(row.suspended_until).toISOString() : null,
+      suspensionReason: row.suspension_reason || '',
+      chatMuted: !!row.chat_muted && (!row.chat_muted_until || new Date(row.chat_muted_until).getTime() > Date.now()),
+      chatMutedUntil: row.chat_muted_until ? new Date(row.chat_muted_until).toISOString() : null,
+      chatMuteReason: row.chat_mute_reason || '',
       displayName: row.display_name,
       avatar: row.avatar,
       bio: row.bio || '',
@@ -374,13 +415,22 @@ function createAccountStore({ databaseUrl, production = false } = {}) {
     username = validateUsername(username);
     password = validatePassword(password);
     const result = await pool.query(
-      `SELECT id, password_salt, password_hash FROM users WHERE username_key = $1`,
+      `SELECT id, username, username_key, password_salt, password_hash, account_status, suspended_until, suspension_reason
+       FROM users WHERE username_key = $1`,
       [username.toLowerCase()]
     );
     if (!result.rowCount) throw new Error('Incorrect username or password.');
     const row = result.rows[0];
     const valid = await verifyPassword(password, row.password_salt, row.password_hash);
     if (!valid) throw new Error('Incorrect username or password.');
+    if (row.account_status === 'suspended') {
+      const until = row.suspended_until ? new Date(row.suspended_until).getTime() : null;
+      if (!until || until > Date.now()) {
+        const timing = until ? ` until ${new Date(until).toLocaleString()}` : '';
+        throw new Error(`This account is suspended${timing}. ${row.suspension_reason || 'Contact Sivel Poker administration.'}`);
+      }
+      await pool.query(`UPDATE users SET account_status='active', suspended_until=NULL, suspension_reason='' WHERE id=$1`, [row.id]);
+    }
     const client = await pool.connect();
     try {
       await client.query('BEGIN');
@@ -399,16 +449,25 @@ function createAccountStore({ databaseUrl, production = false } = {}) {
 
   async function authenticate(rawToken) {
     if (!rawToken) return null;
+    const hash = tokenHash(rawToken);
     const result = await pool.query(
-      `SELECT s.user_id
-       FROM auth_sessions s
+      `SELECT s.user_id, u.account_status, u.suspended_until
+       FROM auth_sessions s JOIN users u ON u.id=s.user_id
        WHERE s.token_hash = $1 AND s.expires_at > NOW()`,
-      [tokenHash(rawToken)]
+      [hash]
     );
     if (!result.rowCount) return null;
-    const userId = result.rows[0].user_id;
-    await pool.query('UPDATE auth_sessions SET last_seen = NOW() WHERE token_hash = $1', [tokenHash(rawToken)]);
-    return accountById(pool, userId);
+    const row = result.rows[0];
+    if (row.account_status === 'suspended') {
+      const until = row.suspended_until ? new Date(row.suspended_until).getTime() : null;
+      if (!until || until > Date.now()) {
+        await pool.query('DELETE FROM auth_sessions WHERE token_hash=$1', [hash]);
+        return null;
+      }
+      await pool.query(`UPDATE users SET account_status='active', suspended_until=NULL, suspension_reason='' WHERE id=$1`, [row.user_id]);
+    }
+    await pool.query('UPDATE auth_sessions SET last_seen = NOW() WHERE token_hash = $1', [hash]);
+    return accountById(pool, row.user_id);
   }
 
   async function requireAuth(rawToken) {
@@ -1180,18 +1239,22 @@ function createAccountStore({ databaseUrl, production = false } = {}) {
   }
 
   async function adminOverview() {
-    const [counts, recent] = await Promise.all([
+    const [counts, recent, settings] = await Promise.all([
       pool.query(`SELECT
         (SELECT COUNT(*)::int FROM users) AS accounts,
         (SELECT COUNT(*)::int FROM auth_sessions WHERE expires_at > NOW() AND last_seen > NOW() - INTERVAL '15 minutes') AS active_sessions,
         (SELECT COALESCE(SUM(balance),0)::bigint FROM wallets) AS total_chips,
-        (SELECT COUNT(*)::int FROM friendships) AS friendships`),
+        (SELECT COUNT(*)::int FROM friendships) AS friendships,
+        (SELECT COUNT(*)::int FROM users WHERE role='admin') AS administrators,
+        (SELECT COUNT(*)::int FROM users WHERE account_status='suspended' AND (suspended_until IS NULL OR suspended_until>NOW())) AS suspended,
+        (SELECT COUNT(*)::int FROM users WHERE chat_muted=TRUE AND (chat_muted_until IS NULL OR chat_muted_until>NOW())) AS muted`),
       pool.query(`SELECT a.id, a.action, a.details, a.created_at,
                          admin.username AS admin_username, target.username AS target_username
                   FROM admin_audit_log a
                   JOIN users admin ON admin.id=a.admin_user_id
                   LEFT JOIN users target ON target.id=a.target_user_id
-                  ORDER BY a.created_at DESC LIMIT 20`)
+                  ORDER BY a.created_at DESC LIMIT 40`),
+      adminGetSettings()
     ]);
     const row = counts.rows[0];
     return {
@@ -1199,6 +1262,10 @@ function createAccountStore({ databaseUrl, production = false } = {}) {
       activeSessions: Number(row.active_sessions || 0),
       totalChips: Number(row.total_chips || 0),
       friendships: Number(row.friendships || 0),
+      administrators: Number(row.administrators || 0),
+      suspended: Number(row.suspended || 0),
+      muted: Number(row.muted || 0),
+      settings,
       recentActions: recent.rows.map(item => ({
         id: Number(item.id), action: item.action, details: item.details || {},
         adminUsername: item.admin_username, targetUsername: item.target_username || '', createdAt: item.created_at
@@ -1210,7 +1277,8 @@ function createAccountStore({ databaseUrl, production = false } = {}) {
     const q = String(query || '').trim().slice(0,40);
     if (q.length < 2) return [];
     const result = await pool.query(
-      `SELECT u.id, u.username, u.role, u.created_at, u.last_seen_at,
+      `SELECT u.id, u.username, u.username_key, u.role, u.created_at, u.last_seen_at, u.account_status,
+              u.suspended_until, u.suspension_reason, u.chat_muted, u.chat_muted_until, u.chat_mute_reason,
               p.display_name, p.avatar, p.level, p.xp, p.tables_played, p.tables_won,
               w.balance
        FROM users u JOIN player_profiles p ON p.user_id=u.id JOIN wallets w ON w.user_id=u.id
@@ -1220,9 +1288,11 @@ function createAccountStore({ databaseUrl, production = false } = {}) {
       [`%${q}%`, q]
     );
     return result.rows.map(row => ({
-      id:Number(row.id), username:row.username, role:row.role||'player', isAdmin:row.role==='admin',
+      id:Number(row.id), username:row.username, role:row.role||'player', isAdmin:row.role==='admin', isOwner:isOwnerUsername(row.username_key||row.username),
       displayName:row.display_name, avatar:row.avatar, level:Number(row.level), xp:Number(row.xp),
       bankroll:Number(row.balance), tablesPlayed:Number(row.tables_played), tablesWon:Number(row.tables_won),
+      accountStatus:row.account_status||'active', suspendedUntil:row.suspended_until, suspensionReason:row.suspension_reason||'',
+      chatMuted:!!row.chat_muted && (!row.chat_muted_until || new Date(row.chat_muted_until).getTime()>Date.now()), chatMutedUntil:row.chat_muted_until, chatMuteReason:row.chat_mute_reason||'',
       createdAt:row.created_at, lastSeen:row.last_seen_at
     }));
   }
@@ -1251,6 +1321,155 @@ function createAccountStore({ databaseUrl, production = false } = {}) {
       try { await client.query('ROLLBACK'); } catch (_) {}
       throw err;
     } finally { client.release(); }
+  }
+
+  async function adminGetSettings() {
+    const result = await pool.query(`SELECT value FROM admin_settings WHERE setting_key='platform'`);
+    const value = result.rowCount ? (result.rows[0].value || {}) : {};
+    return { registrationsOpen: value.registrationsOpen !== false };
+  }
+
+  async function adminUpdateSettings({ adminUserId, registrationsOpen }) {
+    const settings = { registrationsOpen: registrationsOpen !== false };
+    await pool.query(
+      `INSERT INTO admin_settings(setting_key,value,updated_at,updated_by)
+       VALUES ('platform',$2::jsonb,NOW(),$1)
+       ON CONFLICT (setting_key) DO UPDATE SET value=EXCLUDED.value,updated_at=NOW(),updated_by=EXCLUDED.updated_by`,
+      [adminUserId, JSON.stringify(settings)]
+    );
+    await recordAdminAction(adminUserId, null, 'platform_settings', settings);
+    return settings;
+  }
+
+  async function adminActor(client, adminUserId) {
+    const result = await client.query(`SELECT id,username,username_key,role FROM users WHERE id=$1`, [adminUserId]);
+    if (!result.rowCount || result.rows[0].role !== 'admin') throw new Error('Administrator access required.');
+    return { ...result.rows[0], isOwner: isOwnerUsername(result.rows[0].username_key || result.rows[0].username) };
+  }
+
+  async function adminTarget(client, targetUserId, lock = false) {
+    const result = await client.query(
+      `SELECT u.id,u.username,u.username_key,u.role,u.account_status,u.suspended_until,u.suspension_reason,
+              u.chat_muted,u.chat_muted_until,u.chat_mute_reason,u.admin_notes,
+              p.display_name,p.avatar,p.bio,p.level,p.xp,p.tables_played,p.tables_won,p.hands_played,p.hands_won,p.biggest_pot,
+              w.balance,u.created_at,u.last_seen_at
+       FROM users u JOIN player_profiles p ON p.user_id=u.id JOIN wallets w ON w.user_id=u.id
+       WHERE u.id=$1${lock ? ' FOR UPDATE' : ''}`,
+      [targetUserId]
+    );
+    if (!result.rowCount) throw new Error('Player account not found.');
+    return result.rows[0];
+  }
+
+  async function adminUserDetails(targetUserId) {
+    const target = await adminTarget(pool, targetUserId);
+    const [sessions, friends, transactions, audit] = await Promise.all([
+      pool.query(`SELECT COUNT(*)::int AS count, MAX(last_seen) AS latest FROM auth_sessions WHERE user_id=$1 AND expires_at>NOW()`, [targetUserId]),
+      pool.query(`SELECT COUNT(*)::int AS count FROM friendships WHERE user_id_low=$1 OR user_id_high=$1`, [targetUserId]),
+      pool.query(`SELECT amount,balance_before,balance_after,reason,room_code,created_at FROM wallet_transactions WHERE user_id=$1 ORDER BY created_at DESC LIMIT 25`, [targetUserId]),
+      pool.query(`SELECT a.action,a.details,a.created_at,u.username AS admin_username FROM admin_audit_log a JOIN users u ON u.id=a.admin_user_id WHERE a.target_user_id=$1 ORDER BY a.created_at DESC LIMIT 25`, [targetUserId])
+    ]);
+    return {
+      id:Number(target.id),username:target.username,displayName:target.display_name,avatar:target.avatar,bio:target.bio||'',
+      role:target.role||'player',isAdmin:target.role==='admin',isOwner:isOwnerUsername(target.username_key||target.username),
+      bankroll:Number(target.balance),level:Number(target.level),xp:Number(target.xp),tablesPlayed:Number(target.tables_played),tablesWon:Number(target.tables_won),handsPlayed:Number(target.hands_played),handsWon:Number(target.hands_won),biggestPot:Number(target.biggest_pot),
+      accountStatus:target.account_status||'active',suspendedUntil:target.suspended_until,suspensionReason:target.suspension_reason||'',
+      chatMuted:!!target.chat_muted && (!target.chat_muted_until || new Date(target.chat_muted_until).getTime()>Date.now()),chatMutedUntil:target.chat_muted_until,chatMuteReason:target.chat_mute_reason||'',
+      adminNotes:target.admin_notes||'',createdAt:target.created_at,lastSeen:target.last_seen_at,
+      activeSessions:Number(sessions.rows[0].count||0),latestSession:sessions.rows[0].latest||null,friends:Number(friends.rows[0].count||0),
+      transactions:transactions.rows.map(row=>({amount:Number(row.amount),balanceBefore:Number(row.balance_before),balanceAfter:Number(row.balance_after),reason:row.reason,room:row.room_code||'',createdAt:row.created_at})),
+      adminHistory:audit.rows.map(row=>({action:row.action,details:row.details||{},adminUsername:row.admin_username,createdAt:row.created_at}))
+    };
+  }
+
+  async function adminSetBankroll({ adminUserId, targetUserId, balance, reason }) {
+    balance = Math.trunc(Number(balance));
+    if (!Number.isFinite(balance) || balance < 0 || balance > 100_000_000) throw new Error('Bankroll must be between 0 and 100,000,000 chips.');
+    const why = cleanAdminReason(reason);
+    if (why.length < 4) throw new Error('Enter a clear reason for the bankroll change.');
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
+      await adminActor(client, adminUserId);
+      const target = await adminTarget(client, targetUserId, true);
+      const before = Number(target.balance), amount = balance - before;
+      await client.query(`UPDATE wallets SET balance=$2,updated_at=NOW() WHERE user_id=$1`, [targetUserId,balance]);
+      if (amount !== 0) await client.query(`INSERT INTO wallet_transactions(user_id,amount,balance_before,balance_after,reason) VALUES ($1,$2,$3,$4,'admin_set_bankroll')`, [targetUserId,amount,before,balance]);
+      await client.query(`INSERT INTO admin_audit_log(admin_user_id,target_user_id,action,details) VALUES ($1,$2,'bankroll_set',$3::jsonb)`, [adminUserId,targetUserId,JSON.stringify({before,after:balance,reason:why})]);
+      await client.query('COMMIT');
+      return { userId:Number(targetUserId),balanceBefore:before,balanceAfter:balance,amount };
+    } catch(err){try{await client.query('ROLLBACK')}catch(_e){} throw err} finally{client.release()}
+  }
+
+  async function adminSetSuspension({ adminUserId, targetUserId, active, minutes, reason }) {
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
+      const actor=await adminActor(client,adminUserId),target=await adminTarget(client,targetUserId,true);
+      if (isOwnerUsername(target.username_key||target.username)) throw new Error('The primary owner account cannot be suspended.');
+      if (Number(target.id)===Number(actor.id)) throw new Error('You cannot suspend your own administrator session.');
+      if (active) {
+        const why=cleanAdminReason(reason);
+        if (why.length<4) throw new Error('Enter a suspension reason.');
+        const until=durationUntil(minutes);
+        await client.query(`UPDATE users SET account_status='suspended',suspended_until=$2,suspension_reason=$3 WHERE id=$1`,[targetUserId,until,why]);
+        await client.query(`DELETE FROM auth_sessions WHERE user_id=$1`,[targetUserId]);
+        await client.query(`INSERT INTO admin_audit_log(admin_user_id,target_user_id,action,details) VALUES ($1,$2,'account_suspended',$3::jsonb)`,[adminUserId,targetUserId,JSON.stringify({minutes:Number(minutes)||0,until,reason:why})]);
+      } else {
+        await client.query(`UPDATE users SET account_status='active',suspended_until=NULL,suspension_reason='' WHERE id=$1`,[targetUserId]);
+        await client.query(`INSERT INTO admin_audit_log(admin_user_id,target_user_id,action,details) VALUES ($1,$2,'account_unsuspended','{}'::jsonb)`,[adminUserId,targetUserId]);
+      }
+      await client.query('COMMIT');
+      return adminUserDetails(targetUserId);
+    } catch(err){try{await client.query('ROLLBACK')}catch(_e){} throw err} finally{client.release()}
+  }
+
+  async function adminSetChatMute({ adminUserId, targetUserId, active, minutes, reason }) {
+    const client=await pool.connect();
+    try{
+      await client.query('BEGIN');
+      const actor=await adminActor(client,adminUserId),target=await adminTarget(client,targetUserId,true);
+      if (isOwnerUsername(target.username_key||target.username)) throw new Error('The primary owner account cannot be muted.');
+      if (Number(target.id)===Number(actor.id)) throw new Error('You cannot mute your own administrator account.');
+      if(active){const why=cleanAdminReason(reason);if(why.length<4)throw new Error('Enter a chat-mute reason.');const until=durationUntil(minutes);await client.query(`UPDATE users SET chat_muted=TRUE,chat_muted_until=$2,chat_mute_reason=$3 WHERE id=$1`,[targetUserId,until,why]);await client.query(`INSERT INTO admin_audit_log(admin_user_id,target_user_id,action,details) VALUES ($1,$2,'chat_muted',$3::jsonb)`,[adminUserId,targetUserId,JSON.stringify({minutes:Number(minutes)||0,until,reason:why})])}
+      else{await client.query(`UPDATE users SET chat_muted=FALSE,chat_muted_until=NULL,chat_mute_reason='' WHERE id=$1`,[targetUserId]);await client.query(`INSERT INTO admin_audit_log(admin_user_id,target_user_id,action,details) VALUES ($1,$2,'chat_unmuted','{}'::jsonb)`,[adminUserId,targetUserId])}
+      await client.query('COMMIT');return adminUserDetails(targetUserId)
+    }catch(err){try{await client.query('ROLLBACK')}catch(_e){}throw err}finally{client.release()}
+  }
+
+  async function assertCanChat(userId) {
+    const result=await pool.query(`SELECT chat_muted,chat_muted_until,chat_mute_reason FROM users WHERE id=$1`,[userId]);
+    if(!result.rowCount)throw new Error('Player account not found.');
+    const row=result.rows[0];
+    if(!row.chat_muted)return true;
+    const until=row.chat_muted_until?new Date(row.chat_muted_until).getTime():null;
+    if(until && until<=Date.now()){await pool.query(`UPDATE users SET chat_muted=FALSE,chat_muted_until=NULL,chat_mute_reason='' WHERE id=$1`,[userId]);return true}
+    const timing=until?` until ${new Date(until).toLocaleString()}`:'';
+    throw new Error(`Your chat access is muted${timing}. ${row.chat_mute_reason||''}`.trim());
+  }
+
+  async function adminForceLogout({adminUserId,targetUserId}) {
+    const client=await pool.connect();try{await client.query('BEGIN');const actor=await adminActor(client,adminUserId),target=await adminTarget(client,targetUserId);if(Number(actor.id)===Number(target.id))throw new Error('Use the normal sign-out button for your own administrator account.');const result=await client.query(`DELETE FROM auth_sessions WHERE user_id=$1`,[targetUserId]);await client.query(`INSERT INTO admin_audit_log(admin_user_id,target_user_id,action,details) VALUES ($1,$2,'forced_logout',$3::jsonb)`,[adminUserId,targetUserId,JSON.stringify({sessions:Number(result.rowCount||0)})]);await client.query('COMMIT');return {sessions:Number(result.rowCount||0)}}catch(err){try{await client.query('ROLLBACK')}catch(_e){}throw err}finally{client.release()}
+  }
+
+  async function adminResetProfile({adminUserId,targetUserId}) {
+    const client=await pool.connect();try{await client.query('BEGIN');await adminActor(client,adminUserId);const target=await adminTarget(client,targetUserId,true);await client.query(`UPDATE player_profiles SET display_name=$2,avatar='🕶️',bio='',updated_at=NOW() WHERE user_id=$1`,[targetUserId,cleanDisplayName(target.username,target.username)]);await client.query(`INSERT INTO admin_audit_log(admin_user_id,target_user_id,action,details) VALUES ($1,$2,'profile_reset',$3::jsonb)`,[adminUserId,targetUserId,JSON.stringify({previousDisplayName:target.display_name,previousAvatar:target.avatar})]);await client.query('COMMIT');return adminUserDetails(targetUserId)}catch(err){try{await client.query('ROLLBACK')}catch(_e){}throw err}finally{client.release()}
+  }
+
+  async function adminResetDailySpin({adminUserId,targetUserId}) {
+    const client=await pool.connect();try{await client.query('BEGIN');await adminActor(client,adminUserId);await adminTarget(client,targetUserId);const result=await client.query(`DELETE FROM daily_spins WHERE user_id=$1`,[targetUserId]);await client.query(`INSERT INTO admin_audit_log(admin_user_id,target_user_id,action,details) VALUES ($1,$2,'daily_spin_reset',$3::jsonb)`,[adminUserId,targetUserId,JSON.stringify({removed:Number(result.rowCount||0)})]);await client.query('COMMIT');return {removed:Number(result.rowCount||0)}}catch(err){try{await client.query('ROLLBACK')}catch(_e){}throw err}finally{client.release()}
+  }
+
+  async function adminSaveNotes({adminUserId,targetUserId,notes}) {
+    const safe=String(notes||'').replace(/[\u0000-\u001F\u007F]/g,' ').trim().slice(0,2000);await adminActor(pool,adminUserId);await adminTarget(pool,targetUserId);await pool.query(`UPDATE users SET admin_notes=$2 WHERE id=$1`,[targetUserId,safe]);await recordAdminAction(adminUserId,targetUserId,'admin_notes_updated',{length:safe.length});return {notes:safe}
+  }
+
+  async function adminSetPassword({adminUserId,targetUserId,password}) {
+    password=validatePassword(password);const client=await pool.connect();try{await client.query('BEGIN');const actor=await adminActor(client,adminUserId),target=await adminTarget(client,targetUserId,true);if(isOwnerUsername(target.username_key||target.username)&&Number(actor.id)!==Number(target.id))throw new Error('Only the owner can change the owner password.');const data=await hashPassword(password);await client.query(`UPDATE users SET password_salt=$2,password_hash=$3 WHERE id=$1`,[targetUserId,data.saltHex,data.hashHex]);await client.query(`DELETE FROM auth_sessions WHERE user_id=$1`,[targetUserId]);await client.query(`INSERT INTO admin_audit_log(admin_user_id,target_user_id,action,details) VALUES ($1,$2,'password_reset','{}'::jsonb)`,[adminUserId,targetUserId]);await client.query('COMMIT');return {ok:true}}catch(err){try{await client.query('ROLLBACK')}catch(_e){}throw err}finally{client.release()}
+  }
+
+  async function adminSetRole({adminUserId,targetUserId,role}) {
+    role=role==='admin'?'admin':'player';const client=await pool.connect();try{await client.query('BEGIN');const actor=await adminActor(client,adminUserId),target=await adminTarget(client,targetUserId,true);if(!actor.isOwner)throw new Error('Only the primary owner can change administrator roles.');if(isOwnerUsername(target.username_key||target.username))throw new Error('The primary owner role cannot be changed.');await client.query(`UPDATE users SET role=$2 WHERE id=$1`,[targetUserId,role]);if(role!=='admin')await client.query(`DELETE FROM auth_sessions WHERE user_id=$1`,[targetUserId]);await client.query(`INSERT INTO admin_audit_log(admin_user_id,target_user_id,action,details) VALUES ($1,$2,'role_changed',$3::jsonb)`,[adminUserId,targetUserId,JSON.stringify({before:target.role,after:role})]);await client.query('COMMIT');return adminUserDetails(targetUserId)}catch(err){try{await client.query('ROLLBACK')}catch(_e){}throw err}finally{client.release()}
   }
 
   async function recentTransactions(userId, limit = 20) {
@@ -1311,7 +1530,20 @@ function createAccountStore({ databaseUrl, production = false } = {}) {
     recordAdminAction,
     adminOverview,
     adminSearchUsers,
+    adminUserDetails,
     adminAdjustBankroll,
+    adminSetBankroll,
+    adminSetSuspension,
+    adminSetChatMute,
+    assertCanChat,
+    adminForceLogout,
+    adminResetProfile,
+    adminResetDailySpin,
+    adminSaveNotes,
+    adminSetPassword,
+    adminSetRole,
+    adminGetSettings,
+    adminUpdateSettings,
     recentTransactions,
     health,
     close: () => pool.end()
