@@ -1004,8 +1004,91 @@ showHandResult=function(type,title,detail,expectedToken){
   return source;
 }
 
+
+function patchProfessionalPotSeatLayoutClient(source) {
+  if (source.includes('SIVEL_PRO_POT_SEAT_LAYOUT')) return source;
+
+  const css = `<style id="sivel-professional-pot-seat-layout">
+/* SIVEL_PRO_POT_SEAT_LAYOUT — keeps the approved board coordinates untouched while centering the pot and integrating stack totals into the seat panel. */
+.center .pot{
+  left:0!important;right:auto!important;margin-left:auto!important;margin-right:auto!important;
+  transform:translateY(210px)!important;z-index:12!important;pointer-events:none!important
+}
+.center .status{
+  transform:translateY(32px)!important;min-width:0!important;width:min(360px,90%)!important;
+  max-width:360px!important;margin-left:auto!important;margin-right:auto!important
+}
+.center .result{
+  transform:translate(-50%,33px)!important;width:min(360px,90%)!important;padding:4px 9px!important
+}
+.center .result strong{font-size:13px!important}.center .result span{font-size:7px!important;margin-top:1px!important}
+.seat .seat-name>span:not(.seat-status-tag){
+  display:inline-flex!important;align-items:center!important;gap:5px!important;width:max-content!important;
+  margin-top:4px!important;padding:2px 7px 2px 4px!important;border-radius:999px!important;
+  color:#f2d98f!important;font-size:10px!important;line-height:1.15!important;letter-spacing:.02em!important;
+  background:linear-gradient(180deg,rgba(25,38,51,.98),rgba(8,15,22,.98))!important;
+  border:1px solid rgba(218,185,103,.35)!important;box-shadow:inset 0 1px 0 rgba(255,255,255,.06),0 3px 8px rgba(0,0,0,.26)!important
+}
+.seat .seat-name>span:not(.seat-status-tag)::before{
+  content:'';display:block;width:12px;height:12px;flex:0 0 12px;border-radius:50%;
+  background:repeating-conic-gradient(from 0deg,#f0cf76 0 12deg,#7e4d13 12deg 24deg);
+  border:2px solid #f5df9c;box-shadow:inset 0 0 0 2px #8b5717,0 1px 3px rgba(0,0,0,.42)
+}
+@media(max-width:760px){
+  .center .pot{transform:translateY(182px)!important}
+  .center .status{transform:translateY(32px)!important;width:min(280px,88%)!important;max-width:280px!important}
+  .center .result{transform:translate(-50%,33px)!important;width:min(280px,88%)!important}
+  .seat .seat-name>span:not(.seat-status-tag){font-size:9px!important;padding:2px 6px 2px 3px!important}
+  .seat .seat-name>span:not(.seat-status-tag)::before{width:10px;height:10px;flex-basis:10px}
+}
+</style>`;
+  return replaceOnce(source, '</head>', css + '\n</head>', 'professional pot and seat layout');
+}
+
+function patchSoloProfessionalPotSeatLayout(source) {
+  if (source.includes('SIVEL_SOLO_PRO_POT_SEAT_LAYOUT')) return source;
+
+  const css = `<style id="sivel-solo-professional-pot-seat-layout">
+/* SIVEL_SOLO_PRO_POT_SEAT_LAYOUT — solo table parity without moving the approved community-card block. */
+#gameScreen .center-table .pot{
+  left:0!important;right:auto!important;margin-left:auto!important;margin-right:auto!important;
+  transform:translateY(205px)!important;z-index:12!important;pointer-events:none!important
+}
+#gameScreen .center-table .status{
+  transform:translateY(41px)!important;min-width:0!important;width:min(360px,90%)!important;
+  max-width:360px!important;margin-left:auto!important;margin-right:auto!important
+}
+#gameScreen .center-table .hand-result,
+#gameScreen .center-table .hand-result.show{
+  transform:translate(-50%,46px)!important;width:min(360px,90%)!important;padding:4px 9px!important
+}
+#gameScreen .center-table .hand-result strong{font-size:13px!important}#gameScreen .center-table .hand-result span{font-size:7px!important;margin-top:1px!important}
+#gameScreen .seat .seat-name>span{
+  display:inline-flex!important;align-items:center!important;gap:5px!important;width:max-content!important;
+  margin-top:4px!important;padding:2px 7px 2px 4px!important;border-radius:999px!important;
+  color:#f2d98f!important;font-size:10px!important;line-height:1.15!important;letter-spacing:.02em!important;
+  background:linear-gradient(180deg,rgba(25,38,51,.98),rgba(8,15,22,.98))!important;
+  border:1px solid rgba(218,185,103,.35)!important;box-shadow:inset 0 1px 0 rgba(255,255,255,.06),0 3px 8px rgba(0,0,0,.26)!important
+}
+#gameScreen .seat .seat-name>span::before{
+  content:'';display:block;width:12px;height:12px;flex:0 0 12px;border-radius:50%;
+  background:repeating-conic-gradient(from 0deg,#f0cf76 0 12deg,#7e4d13 12deg 24deg);
+  border:2px solid #f5df9c;box-shadow:inset 0 0 0 2px #8b5717,0 1px 3px rgba(0,0,0,.42)
+}
+@media(max-width:860px){
+  #gameScreen .center-table .pot{transform:translateY(169px)!important}
+  #gameScreen .center-table .status{transform:translateY(31px)!important;width:min(280px,88%)!important;max-width:280px!important}
+  #gameScreen .center-table .hand-result,
+  #gameScreen .center-table .hand-result.show{transform:translate(-50%,36px)!important;width:min(280px,88%)!important}
+  #gameScreen .seat .seat-name>span{font-size:9px!important;padding:2px 6px 2px 3px!important}
+  #gameScreen .seat .seat-name>span::before{width:10px;height:10px;flex-basis:10px}
+}
+</style>`;
+  return replaceOnce(source, '</head>', css + '\n</head>', 'solo professional pot and seat layout');
+}
+
 function patchMultiplayerHtml(source) {
-  if (source.includes(CLIENT_MARKER)) return patchGameplayVisualFixesClient(patchPremiumTablePresentationClient(patchProfessionalTableClient(patchAllInShowdownClient(patchBustTopUpClient(source)))));
+  if (source.includes(CLIENT_MARKER)) return patchProfessionalPotSeatLayoutClient(patchGameplayVisualFixesClient(patchPremiumTablePresentationClient(patchProfessionalTableClient(patchAllInShowdownClient(patchBustTopUpClient(source))))));
 
   source = replaceOnce(
     source,
@@ -1096,11 +1179,11 @@ let clientTimeoutActionKey = '';`,
     'explicit check versus call action'
   );
 
-  return patchGameplayVisualFixesClient(patchPremiumTablePresentationClient(patchProfessionalTableClient(patchAllInShowdownClient(patchBustTopUpClient(source)))));
+  return patchProfessionalPotSeatLayoutClient(patchGameplayVisualFixesClient(patchPremiumTablePresentationClient(patchProfessionalTableClient(patchAllInShowdownClient(patchBustTopUpClient(source))))));
 }
 
 function patchIndex(source) {
-  source = patchSoloGameplayVisualFixes(patchSoloTablePresentation(source));
+  source = patchSoloProfessionalPotSeatLayout(patchSoloGameplayVisualFixes(patchSoloTablePresentation(source)));
   const match = source.match(/const encoded='([A-Za-z0-9+/=]+)';/);
   if (!match) throw new Error('V55 patch could not locate the embedded multiplayer client.');
   const multiplayer = Buffer.from(match[1], 'base64').toString('utf8');
@@ -1148,4 +1231,4 @@ if (require.main === module) {
   catch (err) { console.error(`Sivel Poker V55 patch failed: ${err.message}`); process.exit(1); }
 }
 
-module.exports = { patchServer, patchSoloTablePresentation, patchSoloGameplayVisualFixes, patchMultiplayerHtml, patchIndex };
+module.exports = { patchServer, patchSoloTablePresentation, patchSoloGameplayVisualFixes, patchSoloProfessionalPotSeatLayout, patchProfessionalPotSeatLayoutClient, patchMultiplayerHtml, patchIndex };
