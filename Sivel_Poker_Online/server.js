@@ -113,11 +113,19 @@ function adminRoomSnapshot() {
     isPublic: !!room.isPublic,
     stage: room.stage,
     theme: room.options.theme,
+    dealer: room.options.dealer || 'kayla',
+    paused: !!room.adminPaused,
     seated: room.players.filter(player => !player.cashedOut).length,
     maxPlayers: room.options.maxPlayers,
+    buyIn: room.options.buyIn,
+    blinds: `${room.options.smallBlind}/${room.options.bigBlind}`,
+    handNo: room.game ? Number(room.game.handNo || 0) : 0,
+    handActive: !!(room.game && !room.game.handOver),
+    status: room.game?.status || (room.stage === 'lobby' ? 'Waiting in lobby' : 'Ready'),
     players: room.players.filter(player => !player.cashedOut).map(player => ({
       userId: Number(player.userId), username: player.username, name: player.name, avatar: player.avatar,
-      chips: Number(player.chips || 0), connected: !!player.connected, isAdmin: !!player.isAdmin
+      chips: Number(player.chips || 0), connected: !!player.connected, isAdmin: !!player.isAdmin,
+      sittingOut: !!player.sittingOut, leaveAfterHand: !!player.leaveAfterHand
     }))
   }));
 }
@@ -137,6 +145,52 @@ async function sendAdminAnnouncement(admin, text) {
   }
   await accounts.recordAdminAction(admin.id, null, 'global_announcement', { text: message });
   return message;
+}
+
+function disconnectSocialUser(userId) {
+  const clients = socialClients.get(Number(userId));
+  if (!clients) return;
+  for (const response of [...clients]) { try { response.end(); } catch (_) {} }
+  socialClients.delete(Number(userId));
+}
+
+async function adminRemoveUserFromTables(userId, reason = 'Administrative removal') {
+  const removals = [];
+  for (const room of [...rooms.values()]) {
+    const player = room.players.find(item => Number(item.userId) === Number(userId) && !item.cashedOut);
+    if (!player) continue;
+    try {
+      const result = await leaveRoom(room, player.token);
+      removals.push({ roomCode: room.code, payout: Number(result.payout || 0) });
+    } catch (err) {
+      console.error(`Unable to remove user ${userId} from ${room.code}:`, err);
+    }
+  }
+  return removals;
+}
+
+async function adminCashOutRoom(room, { reopenPublic = true } = {}) {
+  if (!room) throw new Error('Table not found.');
+  room.adminPaused = true;
+  clearTurnTimer(room);
+  clearPublicNextTimer(room);
+  const payouts = [];
+  for (const player of [...room.players].filter(item => !item.cashedOut)) {
+    try {
+      const result = await leaveRoom(room, player.token);
+      payouts.push({ userId: Number(player.userId), username: player.username, payout: Number(result.payout || 0) });
+    } catch (err) {
+      console.error(`Administrative cash-out failed for ${player.username} at ${room.code}:`, err);
+    }
+  }
+  if (room.isPublic) {
+    resetPublicRoom(room);
+    room.adminPaused = !reopenPublic;
+    if (reopenPublic) broadcast(room);
+  } else {
+    rooms.delete(room.code);
+  }
+  return payouts;
 }
 
 function commonHeaders(extra = {}) {
@@ -269,6 +323,7 @@ function createRoom(hostAccount, options = {}) {
     publicName: '',
     publicDescription: '',
     publicNextTimer: null,
+    adminPaused: false,
     options: {
       maxPlayers,
       buyIn,
@@ -305,6 +360,7 @@ function createPublicRoom(definition) {
     publicName: definition.name,
     publicDescription: definition.description,
     publicNextTimer: null,
+    adminPaused: false,
     options: {
       maxPlayers: definition.maxPlayers,
       buyIn: definition.buyIn,
@@ -365,8 +421,8 @@ function publicTableSummary(room) {
   const activeHand = !!(room.game && !room.game.handOver && room.game.phase === 'betting');
   const physicalSeatsAvailable = !activeHand || room.players.length < room.options.maxPlayers;
   const joinable = seated.length < room.options.maxPlayers && physicalSeatsAvailable;
-  let status = 'Waiting for players';
-  if (activeHand) status = `Hand ${room.game.handNo} in progress`;
+  let status = room.adminPaused ? 'Paused by administration' : 'Waiting for players';
+  if (!room.adminPaused && activeHand) status = `Hand ${room.game.handNo} in progress`;
   else if (room.game && room.game.handOver && activeIndices(room).length >= 2) status = 'Next hand starting';
   else if (seated.length === 1) status = 'One player waiting';
   return {
@@ -376,6 +432,7 @@ function publicTableSummary(room) {
     description: room.publicDescription,
     theme: room.options.theme,
     dealer: room.options.dealer || 'kayla',
+    paused: !!room.adminPaused,
     maxPlayers: room.options.maxPlayers,
     buyIn: room.options.buyIn,
     smallBlind: room.options.smallBlind,
@@ -393,6 +450,15 @@ function publicTableSummary(room) {
 function schedulePublicPlay(room, delay = PUBLIC_NEXT_HAND_MS) {
   if (!room || !room.isPublic) return;
   clearPublicNextTimer(room);
+  if (room.adminPaused) {
+    if (room.game && room.game.handOver) {
+      room.game.phase = 'waiting';
+      room.game.currentActor = null;
+      room.game.status = 'Table paused by administration.';
+    }
+    broadcast(room);
+    return;
+  }
   const enoughPlayers = room.stage === 'lobby' ? seatedPlayers(room).filter(player => !player.sittingOut).length >= 2 : activeIndices(room).length >= 2;
   if (!enoughPlayers) {
     if (room.game) {
@@ -649,6 +715,7 @@ function startTable(room) {
 
 function startHand(room) {
   const game = room.game;
+  if (room.adminPaused) throw new Error('This table is paused by administration.');
   if (!game || game.tableOver) throw new Error('The table is not available.');
   clearTurnTimer(room);
   if (room.isPublic) compactPublicPlayers(room);
@@ -1537,7 +1604,7 @@ async function handleApi(req, res, pathname, url) {
     }
     if (req.method === 'GET' && pathname === '/api/health') {
       const database = await accounts.health();
-      return json(res, 200, { ok: true, version: 'full-card-public-fix-1', database: database.ok, rooms: rooms.size, publicTables: PUBLIC_TABLE_DEFINITIONS.length, now: Date.now() });
+      return json(res, 200, { ok: true, version: 'admin-command-center-1', database: database.ok, rooms: rooms.size, publicTables: PUBLIC_TABLE_DEFINITIONS.length, now: Date.now() });
     }
     if (req.method === 'GET' && pathname === '/api/public-tables') {
       ensurePublicTables();
@@ -1568,6 +1635,11 @@ async function handleApi(req, res, pathname, url) {
       await accounts.requireAdmin(authTokenFrom(req));
       const users = await accounts.adminSearchUsers(url.searchParams.get('q'));
       return json(res, 200, { ok: true, users });
+    }
+    if (req.method === 'GET' && pathname === '/api/admin/user') {
+      await accounts.requireAdmin(authTokenFrom(req));
+      const user = await accounts.adminUserDetails(Number(url.searchParams.get('userId')));
+      return json(res, 200, { ok: true, user });
     }
 
     if (req.method === 'GET' && pathname === '/api/social/events') {
@@ -1659,6 +1731,8 @@ async function handleApi(req, res, pathname, url) {
     const body = await readJson(req);
 
     if (pathname === '/api/register') {
+      const settings = await accounts.adminGetSettings();
+      if (!settings.registrationsOpen) throw new Error('New account registration is temporarily closed by Sivel Poker administration.');
       const result = await accounts.register(body);
       return json(res, 200, { ok: true, ...result });
     }
@@ -1704,6 +1778,111 @@ async function handleApi(req, res, pathname, url) {
       const adjustment = await accounts.adminAdjustBankroll({ adminUserId: admin.id, targetUserId: Number(body.userId), amount: body.amount, reason: body.reason });
       await broadcastSocial([Number(body.userId)]);
       return json(res, 200, { ok: true, adjustment });
+    }
+    if (pathname === '/api/admin/set-bankroll') {
+      const admin = await accounts.requireAdmin(authTokenFrom(req, body));
+      const adjustment = await accounts.adminSetBankroll({ adminUserId: admin.id, targetUserId: Number(body.userId), balance: body.balance, reason: body.reason });
+      await broadcastSocial([Number(body.userId)]);
+      return json(res, 200, { ok: true, adjustment });
+    }
+    if (pathname === '/api/admin/suspension') {
+      const admin = await accounts.requireAdmin(authTokenFrom(req, body));
+      const targetUserId = Number(body.userId);
+      const user = await accounts.adminSetSuspension({ adminUserId: admin.id, targetUserId, active: !!body.active, minutes: body.minutes, reason: body.reason });
+      const removals = body.active ? await adminRemoveUserFromTables(targetUserId, body.reason) : [];
+      if (body.active) disconnectSocialUser(targetUserId);
+      await broadcastSocial([targetUserId]);
+      return json(res, 200, { ok: true, user, removals });
+    }
+    if (pathname === '/api/admin/chat-mute') {
+      const admin = await accounts.requireAdmin(authTokenFrom(req, body));
+      const user = await accounts.adminSetChatMute({ adminUserId: admin.id, targetUserId: Number(body.userId), active: !!body.active, minutes: body.minutes, reason: body.reason });
+      await broadcastSocial([Number(body.userId)]);
+      return json(res, 200, { ok: true, user });
+    }
+    if (pathname === '/api/admin/force-logout') {
+      const admin = await accounts.requireAdmin(authTokenFrom(req, body));
+      const targetUserId = Number(body.userId);
+      const result = await accounts.adminForceLogout({ adminUserId: admin.id, targetUserId });
+      disconnectSocialUser(targetUserId);
+      return json(res, 200, { ok: true, ...result });
+    }
+    if (pathname === '/api/admin/reset-profile') {
+      const admin = await accounts.requireAdmin(authTokenFrom(req, body));
+      const user = await accounts.adminResetProfile({ adminUserId: admin.id, targetUserId: Number(body.userId) });
+      await broadcastSocial([Number(body.userId)]);
+      return json(res, 200, { ok: true, user });
+    }
+    if (pathname === '/api/admin/reset-daily-spin') {
+      const admin = await accounts.requireAdmin(authTokenFrom(req, body));
+      const result = await accounts.adminResetDailySpin({ adminUserId: admin.id, targetUserId: Number(body.userId) });
+      return json(res, 200, { ok: true, ...result });
+    }
+    if (pathname === '/api/admin/notes') {
+      const admin = await accounts.requireAdmin(authTokenFrom(req, body));
+      const result = await accounts.adminSaveNotes({ adminUserId: admin.id, targetUserId: Number(body.userId), notes: body.notes });
+      return json(res, 200, { ok: true, ...result });
+    }
+    if (pathname === '/api/admin/reset-password') {
+      const admin = await accounts.requireAdmin(authTokenFrom(req, body));
+      const targetUserId = Number(body.userId);
+      const result = await accounts.adminSetPassword({ adminUserId: admin.id, targetUserId, password: body.password });
+      disconnectSocialUser(targetUserId);
+      return json(res, 200, { ok: true, ...result });
+    }
+    if (pathname === '/api/admin/role') {
+      const admin = await accounts.requireAdmin(authTokenFrom(req, body));
+      const targetUserId = Number(body.userId);
+      const user = await accounts.adminSetRole({ adminUserId: admin.id, targetUserId, role: body.role });
+      if (body.role !== 'admin') disconnectSocialUser(targetUserId);
+      await broadcastSocial([targetUserId]);
+      return json(res, 200, { ok: true, user });
+    }
+    if (pathname === '/api/admin/settings') {
+      const admin = await accounts.requireAdmin(authTokenFrom(req, body));
+      const settings = await accounts.adminUpdateSettings({ adminUserId: admin.id, registrationsOpen: body.registrationsOpen });
+      return json(res, 200, { ok: true, settings });
+    }
+    if (pathname === '/api/admin/table-control') {
+      const admin = await accounts.requireAdmin(authTokenFrom(req, body));
+      const room = getRoom(body.roomCode);
+      if (!room) throw new Error('Table not found.');
+      const control = String(body.control || '');
+      if (control === 'pause') {
+        room.adminPaused = true;
+        clearPublicNextTimer(room);
+        if (room.game?.handOver) room.game.status = 'Table paused by administration.';
+        systemChat(room, 'This table has been paused by administration.');
+        broadcast(room);
+      } else if (control === 'resume') {
+        room.adminPaused = false;
+        systemChat(room, 'This table has been resumed by administration.');
+        if (room.isPublic) schedulePublicPlay(room, 500);
+        else broadcast(room);
+      } else if (control === 'message') {
+        const text = cleanAdminText(body.text, 180);
+        if (!text) throw new Error('Enter a table message.');
+        pushChat(room, { system: true, senderToken: '', name: 'Sivel Poker Admin', avatar: '👑', role: 'admin', isAdmin: true, text: `ADMIN · ${text}` });
+        broadcast(room);
+      } else if (control === 'close') {
+        const payouts = await adminCashOutRoom(room, { reopenPublic: true });
+        await accounts.recordAdminAction(admin.id, null, room.isPublic ? 'public_table_reset' : 'private_table_closed', { roomCode: body.roomCode, payouts });
+        return json(res, 200, { ok: true, payouts });
+      } else throw new Error('Unknown table control.');
+      await accounts.recordAdminAction(admin.id, null, `table_${control}`, { roomCode: room.code, text: cleanAdminText(body.text, 180) });
+      return json(res, 200, { ok: true });
+    }
+    if (pathname === '/api/admin/emergency-cashout') {
+      const admin = await accounts.requireAdmin(authTokenFrom(req, body));
+      if (String(body.confirmation || '').trim().toUpperCase() !== 'CASH OUT ALL') throw new Error('Type CASH OUT ALL to confirm.');
+      const results = [];
+      for (const room of [...rooms.values()]) {
+        const payouts = await adminCashOutRoom(room, { reopenPublic: true });
+        results.push({ roomCode: room.code, payouts });
+      }
+      ensurePublicTables();
+      await accounts.recordAdminAction(admin.id, null, 'emergency_cashout_all', { tables: results.length });
+      return json(res, 200, { ok: true, tables: results.length, results });
     }
     if (pathname === '/api/admin/kick') {
       const admin = await accounts.requireAdmin(authTokenFrom(req, body));
@@ -1872,6 +2051,7 @@ async function handleApi(req, res, pathname, url) {
       return json(res, 200, result);
     }
     if (pathname === '/api/chat') {
+      await accounts.assertCanChat(player.userId);
       sendChatMessage(room, player, body.text);
       return json(res, 200, { ok: true });
     }
