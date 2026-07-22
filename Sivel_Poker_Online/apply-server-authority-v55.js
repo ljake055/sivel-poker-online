@@ -731,6 +731,147 @@ function applyTableMotion(){const motion=pendingTableMotion;pendingTableMotion=n
   return source;
 }
 
+
+function patchSoloTablePresentation(source) {
+  if (source.includes('SIVEL_SOLO_PUBLIC_PRESENTATION_MATCH')) return source;
+
+  source = replaceOnce(
+    source,
+    '<div class="table-dealer-console"><span>DEALER</span><i></i></div>',
+    '<!-- SIVEL_SOLO_PUBLIC_PRESENTATION_MATCH — redundant dealer console removed. -->',
+    'solo redundant dealer console'
+  );
+
+  source = replaceOnce(
+    source,
+    '<div class="solo-table-host-copy"><small>TABLE DEALER</small>',
+    '<div class="solo-table-host-copy"><small>DEALER</small>',
+    'solo dealer identity label'
+  );
+
+  source = replaceOnce(
+    source,
+    '<div class="raiseamt" id="raiseAmount">40</div>',
+    '<div class="raiseamt"><small>RAISE TO</small><strong id="raiseAmount">40</strong></div>',
+    'solo raise-to amount label'
+  );
+
+  const soloCss = `<style id="sivel-solo-public-presentation-match">
+/* SIVEL_SOLO_PUBLIC_PRESENTATION_MATCH — mirrors the polished public-table presentation while preserving solo AI and progression. */
+#gameScreen .table-dealer-console{display:none!important}
+#gameScreen .table-center-brand{display:none!important}
+#gameScreen .solo-table-host,
+#gameScreen[data-players="2"] .solo-table-host,
+#gameScreen[data-players="3"] .solo-table-host,
+#gameScreen[data-players="4"] .solo-table-host,
+#gameScreen[data-players="5"] .solo-table-host,
+#gameScreen[data-players="6"] .solo-table-host{
+  left:18px!important;right:auto!important;top:16px!important;transform:none!important;z-index:11!important;
+  padding:6px 10px 6px 6px!important;gap:8px!important;border-radius:15px!important;
+  background:linear-gradient(180deg,rgba(16,27,39,.96),rgba(6,11,17,.98))!important;
+  border-color:rgba(224,188,105,.42)!important;box-shadow:0 10px 24px rgba(0,0,0,.42)!important
+}
+#gameScreen .solo-table-host-avatar{width:34px!important;height:34px!important;font-size:21px!important;border-width:1px!important;box-shadow:0 0 0 2px #0b1118!important}
+#gameScreen .solo-table-host-copy{min-width:68px!important}
+#gameScreen .solo-table-host-copy small{font-size:6px!important;letter-spacing:.18em!important}
+#gameScreen .solo-table-host-copy strong{font-size:12px!important}
+#gameScreen .solo-table-host-copy span{display:none!important}
+#gameScreen .center-table{z-index:6!important;width:64%!important;top:44%!important;left:50%!important;transform:translate(-50%,-50%)!important;text-align:center!important}
+#gameScreen .board{position:relative;z-index:7!important;margin:12px auto 26px!important;left:auto!important;right:auto!important}
+#gameScreen .board:after{content:'SIVEL POKER · OFFICIAL CASH TABLE';position:absolute;left:50%;bottom:-18px;transform:translateX(-50%);font-size:6px;font-weight:950;letter-spacing:.25em;color:rgba(226,198,126,.34);white-space:nowrap;text-shadow:0 1px 5px rgba(0,0,0,.45)}
+#gameScreen .board-slot{position:relative;z-index:7!important;backface-visibility:hidden;transform-style:preserve-3d}
+#gameScreen .status{position:relative;z-index:7!important;min-width:250px!important;padding:8px 14px!important;background:rgba(3,9,14,.88)!important;border-color:rgba(255,255,255,.10)!important;box-shadow:0 8px 20px rgba(0,0,0,.34)!important}
+#gameScreen .action-flash{display:none!important}
+#gameScreen .seat-core{position:relative!important;padding-right:12px!important}
+#gameScreen .position-badges{position:absolute;right:-18px;top:50%;transform:translateY(-50%);display:flex;flex-direction:column;align-items:center;gap:3px;z-index:6}
+#gameScreen .position-badges .hidden{display:none!important}
+#gameScreen .position-badges .dealer,#gameScreen .position-badges .blind-badge{position:static!important;inset:auto!important;transform:none!important;margin:0!important;width:24px;height:24px;border-radius:50%;display:grid;place-items:center;font-size:8px;font-weight:950;line-height:1;box-shadow:0 4px 10px rgba(0,0,0,.42)}
+#gameScreen .position-badges .dealer{background:linear-gradient(180deg,#fffdf5,#d7d2c5);color:#171717;border:2px solid #aaa393}
+#gameScreen .position-badges .blind-badge{height:18px;border-radius:9px;background:linear-gradient(180deg,#25384b,#101b27);color:#f2d388;border:1px solid #7c6740}
+#gameScreen .seat.active-turn .seat-core{border-color:#62b9f3!important;box-shadow:0 0 0 3px rgba(84,177,239,.14),0 10px 18px rgba(0,0,0,.5)!important}
+#gameScreen .seat.folded{opacity:.48!important}
+#gameScreen .solo-seat-status{display:none;font-style:normal;margin-top:3px;font-size:7px;font-weight:950;letter-spacing:.1em}
+#gameScreen .solo-seat-status.all-in{display:block;color:#ffd875!important;background:#3a290f;border:1px solid #8c6722;border-radius:5px;padding:2px 5px;width:max-content}
+#gameScreen .main-actions{display:grid!important;grid-template-columns:minmax(100px,.85fr) minmax(120px,1fr) minmax(230px,1.65fr) minmax(145px,1.1fr)!important;gap:10px!important;max-width:900px;margin:0 auto}
+#gameScreen .action{height:52px!important;min-width:0!important;border-radius:12px!important;letter-spacing:.02em!important;box-shadow:inset 0 1px 0 rgba(255,255,255,.06),0 7px 14px rgba(0,0,0,.22)}
+#gameScreen .action:not(:disabled):active{transform:translateY(1px)}
+#gameScreen .raisebox{min-height:52px!important;padding:0 12px!important;width:auto!important;order:initial!important}
+#gameScreen .raisebox input{width:100%!important;min-width:120px}
+#gameScreen .raiseamt{min-width:76px!important;display:flex!important;flex-direction:column!important;align-items:flex-end!important;line-height:1.05!important}
+#gameScreen .raiseamt small{display:block;font-size:7px;letter-spacing:.13em;color:#71889c;font-weight:900}
+#gameScreen .raiseamt strong{display:block;margin-top:3px;color:#f1cf7d;font-size:15px;font-variant-numeric:tabular-nums}
+#gameScreen .pot-copy strong,#gameScreen .seat-name span,#gameScreen .bet-badge strong{font-variant-numeric:tabular-nums}
+#gameScreen .card{backface-visibility:hidden;transform-style:preserve-3d}
+#gameScreen .card.solo-deal-in{animation:soloPublicDealIn .62s cubic-bezier(.18,.78,.22,1) both!important;will-change:translate,rotate,scale,opacity,filter}
+#gameScreen .board-slot.solo-board-reveal{animation:soloPublicBoardReveal .58s cubic-bezier(.2,.78,.18,1) both!important;will-change:rotate,scale,opacity,filter}
+#gameScreen .card.solo-showdown-reveal{animation:soloPublicShowdownReveal .62s cubic-bezier(.2,.72,.22,1) both!important;will-change:rotate,scale,opacity,filter}
+#gameScreen .pot.solo-pot-pulse{animation:soloPublicPotPulse .48s ease-out both!important}
+#gameScreen .solo-action-pop{position:absolute;left:50%;top:-11px;z-index:18;translate:-50% 0;padding:5px 9px;border-radius:999px;border:1px solid rgba(255,255,255,.18);background:linear-gradient(180deg,rgba(11,20,29,.98),rgba(4,9,14,.98));box-shadow:0 7px 20px rgba(0,0,0,.55),inset 0 1px 0 rgba(255,255,255,.08);font-size:8px;font-weight:950;letter-spacing:.12em;color:#e8f3ff;white-space:nowrap;pointer-events:none;animation:soloPublicActionPop 1.05s ease-out both}
+#gameScreen .solo-action-pop.check{color:#aee3ff;border-color:rgba(84,177,239,.35)}
+#gameScreen .solo-action-pop.call{color:#bff5d8;border-color:rgba(72,208,139,.34)}
+#gameScreen .solo-action-pop.raise,#gameScreen .solo-action-pop.bet{color:#ffe29a;border-color:rgba(232,185,91,.4)}
+#gameScreen .solo-action-pop.fold{color:#c3ccd6}
+#gameScreen .solo-action-pop.allin{color:#ffd46e;border-color:rgba(255,181,55,.55);box-shadow:0 7px 22px rgba(0,0,0,.58),0 0 18px rgba(255,173,44,.18)}
+@keyframes soloPublicDealIn{0%{opacity:0;translate:var(--solo-deal-x,0) var(--solo-deal-y,-160px);rotate:var(--solo-deal-rot,-9deg);scale:.72;filter:blur(1px) brightness(1.18)}68%{opacity:1;translate:0 -3px;rotate:0deg;scale:1.025;filter:none}100%{opacity:1;translate:0 0;rotate:0deg;scale:1;filter:none}}
+@keyframes soloPublicBoardReveal{0%{opacity:.16;rotate:0 1 0 92deg;scale:.82;filter:brightness(1.28)}58%{opacity:1;rotate:0 1 0 -7deg;scale:1.035;filter:none}100%{opacity:1;rotate:0 1 0 0deg;scale:1;filter:none}}
+@keyframes soloPublicShowdownReveal{0%{opacity:.35;rotate:0 1 0 88deg;scale:.9;filter:brightness(1.3)}55%{opacity:1;rotate:0 1 0 -8deg;scale:1.035;filter:none}100%{opacity:1;rotate:0 1 0 0deg;scale:1;filter:none}}
+@keyframes soloPublicPotPulse{0%{scale:1;filter:brightness(1)}42%{scale:1.08;filter:brightness(1.25)}100%{scale:1;filter:brightness(1)}}
+@keyframes soloPublicActionPop{0%{opacity:0;translate:-50% 7px;scale:.88}16%{opacity:1;translate:-50% 0;scale:1.03}72%{opacity:1;translate:-50% -1px;scale:1}100%{opacity:0;translate:-50% -9px;scale:.98}}
+body.reduced-motion #gameScreen .card.solo-deal-in,body.reduced-motion #gameScreen .board-slot.solo-board-reveal,body.reduced-motion #gameScreen .card.solo-showdown-reveal,body.reduced-motion #gameScreen .pot.solo-pot-pulse,body.reduced-motion #gameScreen .solo-action-pop{animation-duration:.01ms!important;animation-delay:0ms!important}
+@media(prefers-reduced-motion:reduce){#gameScreen .card.solo-deal-in,#gameScreen .board-slot.solo-board-reveal,#gameScreen .card.solo-showdown-reveal,#gameScreen .pot.solo-pot-pulse,#gameScreen .solo-action-pop{animation-duration:.01ms!important;animation-delay:0ms!important}}
+@media(max-width:860px){#gameScreen .solo-table-host,#gameScreen[data-players] .solo-table-host{left:9px!important;top:9px!important}#gameScreen .board:after{font-size:5px;letter-spacing:.16em}#gameScreen .main-actions{grid-template-columns:1fr 1fr!important}#gameScreen .raisebox{grid-column:1/-1!important}#gameScreen .position-badges{right:-13px}#gameScreen .center-table{width:88%!important}}
+</style>`;
+  source = replaceOnce(source, '</head>', soloCss + '\n</head>', 'solo public-style presentation CSS');
+
+  const soloRuntime = `
+/* SIVEL_SOLO_PUBLIC_PRESENTATION_MATCH runtime */
+let soloPublicBoardCount=0;
+let soloPublicLastPot=0;
+function soloPublicReducedMotion(){return !!(settings&&settings.reducedMotion)||!!(window.matchMedia&&window.matchMedia('(prefers-reduced-motion: reduce)').matches)}
+function soloPublicClearMotion(element,className,delay){if(!element)return;setTimeout(function(){element.classList.remove(className)},Math.max(700,Number(delay||0)+760))}
+function soloPublicDealCards(){if(soloPublicReducedMotion())return;const stage=document.querySelector('#gameScreen .table-stage');if(!stage)return;const host=document.getElementById('soloTableHost');const stageRect=stage.getBoundingClientRect();const hostRect=host?host.getBoundingClientRect():null;const originX=hostRect?hostRect.left+hostRect.width/2:stageRect.left+stageRect.width*.5;const originY=hostRect?hostRect.top+hostRect.height/2:stageRect.top+34;const seats=Array.from(document.querySelectorAll('#seatsLayer .seat')).sort(function(a,b){return Number(a.dataset.index)-Number(b.dataset.index)});let order=0;for(let cardIndex=0;cardIndex<2;cardIndex++){seats.forEach(function(seat,seatOrder){const card=seat.querySelectorAll('.seat-cards .card')[cardIndex];if(!card)return;const rect=card.getBoundingClientRect();const delay=order*62;card.style.setProperty('--solo-deal-x',(originX-(rect.left+rect.width/2))+'px');card.style.setProperty('--solo-deal-y',(originY-(rect.top+rect.height/2))+'px');card.style.setProperty('--solo-deal-rot',((seatOrder%2?1:-1)*(7+(seatOrder%3)*2))+'deg');card.style.animationDelay=delay+'ms';card.classList.add('solo-deal-in');soloPublicClearMotion(card,'solo-deal-in',delay);order++})}}
+function soloPublicRevealBoard(indexes){if(soloPublicReducedMotion())return;indexes.forEach(function(index,order){const slot=document.querySelector('#board .board-slot:nth-child('+(index+1)+')');if(!slot||!slot.querySelector('.card'))return;const delay=order*105;slot.style.animationDelay=delay+'ms';slot.classList.add('solo-board-reveal');soloPublicClearMotion(slot,'solo-board-reveal',delay)})}
+function soloPublicRevealSeat(index){if(soloPublicReducedMotion())return;const seat=document.querySelector('#seatsLayer .seat[data-index="'+index+'"]');if(!seat)return;let animated=0;seat.querySelectorAll('.seat-cards .card').forEach(function(card,cardIndex){if(card.classList.contains('solo-reveal-seen'))return;card.classList.add('solo-reveal-seen');const delay=cardIndex*115;card.style.animationDelay=delay+'ms';card.classList.add('solo-showdown-reveal');soloPublicClearMotion(card,'solo-showdown-reveal',delay);animated++});if(animated)pokerSound('reveal')}
+function soloPublicRevealAll(){document.querySelectorAll('#seatsLayer .seat.showdown-revealed').forEach(function(seat){soloPublicRevealSeat(Number(seat.dataset.index))})}
+function soloPublicPulsePot(){const pot=document.querySelector('#gameScreen .pot');if(!pot||soloPublicReducedMotion())return;pot.classList.remove('solo-pot-pulse');void pot.offsetWidth;pot.classList.add('solo-pot-pulse');soloPublicClearMotion(pot,'solo-pot-pulse',0)}
+function soloPublicShowAction(index,label,kind){const seat=document.querySelector('#seatsLayer .seat[data-index="'+index+'"]');if(!seat)return;seat.querySelectorAll('.solo-action-pop').forEach(function(node){node.remove()});const badge=document.createElement('span');badge.className='solo-action-pop '+kind;badge.textContent=label;seat.appendChild(badge);setTimeout(function(){badge.remove()},1120)}
+function soloPublicActionFromLog(text){text=String(text||'');if(!text)return null;let index=-1;if(/^You\\s/i.test(text))index=0;else{for(let i=1;i<state.players.length;i++){if(text.indexOf(state.players[i].name+' ')===0){index=i;break}}}if(index<0)return null;if(/all-in/i.test(text))return{index:index,label:'ALL-IN',kind:'allin'};if(/ fold(?:s)?\\./i.test(text))return{index:index,label:'FOLD',kind:'fold'};if(/ check(?:s)?\\./i.test(text))return{index:index,label:'CHECK',kind:'check'};let match=text.match(/ call(?:s)? ([0-9,]+)/i);if(match)return{index:index,label:'CALL '+match[1],kind:'call'};match=text.match(/ raise(?:s)? to ([0-9,]+)/i);if(match)return{index:index,label:'RAISE TO '+match[1],kind:'raise'};match=text.match(/ bet(?:s)? ([0-9,]+)/i);if(match)return{index:index,label:'BET '+match[1],kind:'bet'};return null}
+const soloPublicBaseAddLog=addLog;
+addLog=function(text){soloPublicBaseAddLog(text);const action=soloPublicActionFromLog(text);if(action)requestAnimationFrame(function(){soloPublicShowAction(action.index,action.label,action.kind)})};
+const soloPublicBaseSound=pokerSound;
+pokerSound=function(type){if(!soundOn)return;if(type==='deal'){noiseFx(.075,.013,0,620);beep(188,.05,.013,.008,'triangle',132);noiseFx(.07,.011,.105,680);beep(205,.045,.011,.11,'triangle',145);return}if(type==='check'){noiseFx(.025,.012,0,1050);beep(330,.032,.011,.002,'triangle',275);noiseFx(.024,.011,.105,1120);beep(350,.03,.010,.107,'triangle',290);return}if(type==='reveal'){noiseFx(.055,.010,0,760);beep(510,.075,.014,.018,'triangle',690);return}soloPublicBaseSound(type)};
+buildSeats=function(){seatNodes.clear();const layer=$('seatsLayer');layer.innerHTML='';const slots=SEAT_LAYOUTS[activeCount];state.players.forEach(function(p,i){const el=document.createElement('div');el.className='seat slot-'+slots[i];el.dataset.index=i;el.innerHTML='<div class="seat-cards"></div><div class="bet-badge"></div><div class="seat-core"><div class="seat-avatar">'+p.avatar+'</div><div class="seat-name"><strong>'+p.name+(p.human?' · YOU':'')+'</strong><span>0</span><em class="solo-seat-status"></em></div><div class="position-badges"><div class="dealer hidden">D</div><div class="blind-badge solo-sb hidden">SB</div><div class="blind-badge solo-bb hidden">BB</div></div></div>';layer.appendChild(el);seatNodes.set(i,{root:el,cards:el.querySelector('.seat-cards'),bet:el.querySelector('.bet-badge'),chips:el.querySelector('.seat-name span'),dealer:el.querySelector('.dealer'),smallBlind:el.querySelector('.solo-sb'),bigBlind:el.querySelector('.solo-bb'),status:el.querySelector('.solo-seat-status'),sig:'',betSig:null,wasShown:false})})};
+renderSeats=function(){state.players.forEach(function(p,i){const n=seatNodes.get(i);if(!n)return;const revealOpponent=!!(state.reveal&&p.inHand&&!p.folded&&(state.phase==='runout'||(state.handOver&&state.phase==='complete'&&state.completedHandToken===handToken)));const show=p.human||revealOpponent;const sig=p.hole.map(function(c){return String(c.r)+c.s}).join('|')+':'+show+':'+p.inHand;if(sig!==n.sig){n.cards.innerHTML=p.inHand?p.hole.map(function(c,k){return cardHTML(c,!show,k*45)}).join(''):'';n.sig=sig}n.chips.textContent=Number(p.chips||0).toLocaleString();n.dealer.classList.toggle('hidden',i!==state.dealerIndex);n.smallBlind.classList.toggle('hidden',i!==state.sbIndex);n.bigBlind.classList.toggle('hidden',i!==state.bbIndex);n.status.textContent=p.allIn?'ALL-IN':'';n.status.classList.toggle('all-in',!!p.allIn);n.root.classList.toggle('active-turn',state.currentActor===i&&!state.handOver);n.root.classList.toggle('folded',p.folded&&p.inHand);n.root.classList.toggle('busted',p.chips<=0);n.root.classList.toggle('showdown-revealed',!!(show&&!p.human&&p.inHand&&p.hole.length===2));if(show&&!n.wasShown&&!p.human)requestAnimationFrame(function(){soloPublicRevealSeat(i)});n.wasShown=show;if(n.betSig!==p.streetBet){const previousBet=Number(n.betSig||0);n.bet.innerHTML=p.streetBet?(window.SivelChipSystem&&window.SivelChipSystem.betMarkup?window.SivelChipSystem.betMarkup(p.streetBet):'<i class="mini-chip"></i><strong>'+p.streetBet+'</strong>'):'';if(p.streetBet>previousBet)requestAnimationFrame(function(){if(window.SivelChipSystem&&window.SivelChipSystem.bet)window.SivelChipSystem.bet(n.root,p.streetBet-previousBet)});n.betSig=p.streetBet}})};
+const soloPublicBaseRenderBoard=renderBoard;
+renderBoard=function(){const before=soloPublicBoardCount;const beforePot=soloPublicLastPot;soloPublicBaseRenderBoard();const next=state.board.length;if(next>before){const indexes=[];for(let i=before;i<next;i++)indexes.push(i);requestAnimationFrame(function(){soloPublicRevealBoard(indexes)})}soloPublicBoardCount=next;if(Number(state.pot||0)>beforePot)requestAnimationFrame(soloPublicPulsePot);soloPublicLastPot=Number(state.pot||0);$('pot').textContent=Number(state.pot||0).toLocaleString()};
+updateActions=function(){const active=!state.handOver&&state.currentActor===0,p=state.players[0]||{chips:0,streetBet:0},owed=Math.min(amountToCall(0),p.chips),b=legalRaiseBounds(0);$('foldBtn').disabled=!active;$('callBtn').disabled=!active;$('callBtn').textContent=owed?'Call '+Number(owed).toLocaleString():'Check';$('raiseBtn').disabled=!active||!b.canRaise;$('raiseSlider').disabled=!active||!b.canRaise;document.querySelectorAll('.quick-bet').forEach(function(x){x.disabled=!active||!b.canRaise});const min=Math.max(0,b.minTotal),max=Math.max(0,b.maxTotal);$('raiseSlider').min=min;$('raiseSlider').max=max;$('raiseSlider').step=BLINDS[activeBuyIn].sb;let v=Number($('raiseSlider').value);if(!Number.isFinite(v)||v<min)v=min;if(v>max)v=max;$('raiseSlider').value=v;$('raiseAmount').textContent=b.canRaise?Number(v).toLocaleString():'—';const verb=state.currentBet>0?'Raise to':'Bet';$('raiseBtn').textContent=b.canRaise&&v?verb+' '+Number(v).toLocaleString():'Bet / Raise';if(!state.handOver)$('nextHandBtn').classList.add('hidden')};
+const soloPublicBaseStartHand=startHand;
+startHand=function(){soloPublicBoardCount=0;soloPublicLastPot=0;document.querySelectorAll('#seatsLayer .solo-action-pop').forEach(function(node){node.remove()});soloPublicBaseStartHand();if(!state.handOver)requestAnimationFrame(function(){setTimeout(soloPublicDealCards,20)})};
+queueRunout=function(token){if(token!==handToken||state.handOver)return;clearTimeout(transitionTimer);state.transitioning=true;state.phase='runout';state.reveal=true;state.currentActor=null;state.message='All-in · hole cards revealed';dealerSay(DEALERS[activeDealer].showdown);renderAll();requestAnimationFrame(soloPublicRevealAll);transitionTimer=setTimeout(function(){runout(token)},550)};
+runout=function(token){if(token!==handToken||state.handOver||state.phase!=='runout')return;if(state.street==='river'){state.message='All-in · determining the winner…';renderAll();transitionTimer=setTimeout(function(){showdown(token)},850);return}advanceStreet();state.message='All-in · '+capitalize(state.street)+' dealt';renderAll();transitionTimer=setTimeout(function(){runout(token)},700)};
+const soloPublicBaseShowHandResult=showHandResult;
+showHandResult=function(type,title,detail,expectedToken){const showdownResult=!!(state&&state.reveal&&state.phase==='complete'&&!/NO SHOWDOWN/i.test(String(detail||'')));if(!showdownResult){soloPublicBaseShowHandResult(type,title,detail,expectedToken);return}clearTimeout(showHandResult.timer);showHandResult.timer=setTimeout(function(){soloPublicBaseShowHandResult(type,title,detail,expectedToken)},850)};
+const soloPublicBaseSettleHand=settleHand;
+settleHand=function(winnerIndices,wasShowdown){soloPublicBaseSettleHand(winnerIndices,wasShowdown);if(state.reveal)requestAnimationFrame(soloPublicRevealAll);if(wasShowdown&&settings.autoNextHand&&!state.matchOver&&!matchSettled){clearTimeout(window.__autoNextTimer);window.__autoNextTimer=setTimeout(function(){if(state.handOver&&!state.matchOver&&!matchSettled)startHand()},3400)}};
+`;
+
+  source = replaceOnce(
+    source,
+    `$('playTableBtn').onclick=startSession;`,
+    soloRuntime + `\n$('playTableBtn').onclick=startSession;`,
+    'solo public-style runtime'
+  );
+
+  source = replaceOnce(
+    source,
+    `$('raiseSlider').oninput=()=>{$('raiseAmount').textContent=$('raiseSlider').value;};`,
+    `$('raiseSlider').oninput=()=>{const value=Number($('raiseSlider').value)||0;$('raiseAmount').textContent=value?value.toLocaleString():'—';const verb=state&&state.currentBet>0?'Raise to':'Bet';$('raiseBtn').textContent=value?verb+' '+value.toLocaleString():'Bet / Raise';};`,
+    'solo live raise label'
+  );
+
+  return source;
+}
+
 function patchMultiplayerHtml(source) {
   if (source.includes(CLIENT_MARKER)) return patchPremiumTablePresentationClient(patchProfessionalTableClient(patchAllInShowdownClient(patchBustTopUpClient(source))));
 
@@ -827,6 +968,7 @@ let clientTimeoutActionKey = '';`,
 }
 
 function patchIndex(source) {
+  source = patchSoloTablePresentation(source);
   const match = source.match(/const encoded='([A-Za-z0-9+/=]+)';/);
   if (!match) throw new Error('V55 patch could not locate the embedded multiplayer client.');
   const multiplayer = Buffer.from(match[1], 'base64').toString('utf8');
@@ -874,4 +1016,4 @@ if (require.main === module) {
   catch (err) { console.error(`Sivel Poker V55 patch failed: ${err.message}`); process.exit(1); }
 }
 
-module.exports = { patchServer, patchMultiplayerHtml, patchIndex };
+module.exports = { patchServer, patchSoloTablePresentation, patchMultiplayerHtml, patchIndex };
