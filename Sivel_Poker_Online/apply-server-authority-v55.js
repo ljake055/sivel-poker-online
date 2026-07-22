@@ -1087,8 +1087,93 @@ function patchSoloProfessionalPotSeatLayout(source) {
   return replaceOnce(source, '</head>', css + '\n</head>', 'solo professional pot and seat layout');
 }
 
+
+function patchOrganizedPotOpponentStacksClient(source) {
+  if (source.includes('SIVEL_ORGANIZED_POT_STACKS')) return source;
+
+  source = replaceOnce(
+    source,
+    `record.stack.textContent=Number(p.chips||0).toLocaleString();`,
+    `record.stack.textContent=Number(p.chips||0).toLocaleString();record.root.dataset.stack=Number(p.chips||0).toLocaleString();`,
+    'opponent stack display data'
+  );
+
+  const css = `<style id="sivel-organized-pot-opponent-stacks">
+/* SIVEL_ORGANIZED_POT_STACKS — pot/logo separation and opponent stack tabs only; board and table coordinates stay untouched. */
+.center .pot{transform:translateY(232px) scale(.78)!important;transform-origin:center!important;overflow:hidden!important}
+.center .pot-chip-visual .premium-chip{display:none!important}
+.center .pot-chip-visual .premium-chip:first-child{display:block!important;left:50%!important;right:auto!important;top:50%!important;bottom:auto!important;transform:translate(-50%,-50%)!important}
+.center .status{transform:translateY(42px) scale(.72)!important;transform-origin:center!important}
+.center .result{transform:translate(-50%,43px) scale(.72)!important}
+.seat:not(.self-seat)[data-stack] .seat-name>span:not(.seat-status-tag){display:none!important}
+.seat:not(.self-seat)[data-stack]::before{
+  content:attr(data-stack);position:absolute;left:50%;top:-13px;transform:translateX(-50%);z-index:14;
+  display:flex;align-items:center;justify-content:center;min-width:42px;height:21px;padding:0 8px 0 22px;
+  border-radius:999px;border:1px solid rgba(226,195,117,.58);background:linear-gradient(180deg,rgba(18,29,41,.98),rgba(5,11,17,.98));
+  box-shadow:0 6px 14px rgba(0,0,0,.46),inset 0 1px 0 rgba(255,255,255,.08);color:#f4dc98;font-size:10px;font-weight:950;letter-spacing:.02em;font-variant-numeric:tabular-nums;white-space:nowrap
+}
+.seat:not(.self-seat)[data-stack]::after{
+  content:'';position:absolute;left:calc(50% - 28px);top:-9px;z-index:15;width:12px;height:12px;border-radius:50%;
+  background:repeating-conic-gradient(from 0deg,#f0cf76 0 12deg,#7e4d13 12deg 24deg);border:2px solid #f5df9c;box-shadow:inset 0 0 0 2px #8b5717,0 1px 3px rgba(0,0,0,.42)
+}
+@media(max-width:760px){
+  .center .pot{transform:translateY(209px) scale(.8)!important}
+  .center .status{transform:translateY(48px) scale(.72)!important}
+  .center .result{transform:translate(-50%,49px) scale(.72)!important}
+  .seat:not(.self-seat)[data-stack]::before{top:-10px;height:19px;min-width:38px;padding:0 7px 0 19px;font-size:9px}
+  .seat:not(.self-seat)[data-stack]::after{left:calc(50% - 25px);top:-7px;width:10px;height:10px}
+}
+</style>`;
+  return replaceOnce(source, '</head>', css + '\n</head>', 'organized pot and opponent stacks');
+}
+
+function patchSoloOrganizedPotOpponentStacks(source) {
+  if (source.includes('SIVEL_SOLO_ORGANIZED_POT_STACKS')) return source;
+
+  source = replaceOnce(
+    source,
+    `el.className='seat slot-'+slots[i];`,
+    `el.className='seat slot-'+slots[i]+(p.human?' self-seat':'');`,
+    'solo self-seat identity'
+  );
+  source = replaceOnce(
+    source,
+    `n.chips.textContent=Number(p.chips||0).toLocaleString();`,
+    `n.chips.textContent=Number(p.chips||0).toLocaleString();n.root.dataset.stack=Number(p.chips||0).toLocaleString();`,
+    'solo opponent stack display data'
+  );
+
+  const css = `<style id="sivel-solo-organized-pot-opponent-stacks">
+/* SIVEL_SOLO_ORGANIZED_POT_STACKS — solo parity without changing community-card or table coordinates. */
+#gameScreen .center-table .pot{transform:translateY(223px) scale(.78)!important;transform-origin:center!important;overflow:hidden!important}
+#gameScreen .center-table .pot-chip-visual .premium-chip{display:none!important}
+#gameScreen .center-table .pot-chip-visual .premium-chip:first-child{display:block!important;left:50%!important;right:auto!important;top:50%!important;bottom:auto!important;transform:translate(-50%,-50%)!important}
+#gameScreen .center-table .status{transform:translateY(45px) scale(.75)!important;transform-origin:center!important}
+#gameScreen .center-table .hand-result,#gameScreen .center-table .hand-result.show{transform:translate(-50%,46px) scale(.75)!important}
+#gameScreen .seat:not(.self-seat)[data-stack] .seat-name>span{display:none!important}
+#gameScreen .seat:not(.self-seat)[data-stack]::before{
+  content:attr(data-stack);position:absolute;left:50%;top:-13px;transform:translateX(-50%);z-index:14;
+  display:flex;align-items:center;justify-content:center;min-width:42px;height:21px;padding:0 8px 0 22px;
+  border-radius:999px;border:1px solid rgba(226,195,117,.58);background:linear-gradient(180deg,rgba(18,29,41,.98),rgba(5,11,17,.98));
+  box-shadow:0 6px 14px rgba(0,0,0,.46),inset 0 1px 0 rgba(255,255,255,.08);color:#f4dc98;font-size:10px;font-weight:950;letter-spacing:.02em;font-variant-numeric:tabular-nums;white-space:nowrap
+}
+#gameScreen .seat:not(.self-seat)[data-stack]::after{
+  content:'';position:absolute;left:calc(50% - 28px);top:-9px;z-index:15;width:12px;height:12px;border-radius:50%;
+  background:repeating-conic-gradient(from 0deg,#f0cf76 0 12deg,#7e4d13 12deg 24deg);border:2px solid #f5df9c;box-shadow:inset 0 0 0 2px #8b5717,0 1px 3px rgba(0,0,0,.42)
+}
+@media(max-width:860px){
+  #gameScreen .center-table .pot{transform:translateY(183px) scale(.8)!important}
+  #gameScreen .center-table .status{transform:translateY(33px) scale(.75)!important}
+  #gameScreen .center-table .hand-result,#gameScreen .center-table .hand-result.show{transform:translate(-50%,34px) scale(.75)!important}
+  #gameScreen .seat:not(.self-seat)[data-stack]::before{top:-10px;height:19px;min-width:38px;padding:0 7px 0 19px;font-size:9px}
+  #gameScreen .seat:not(.self-seat)[data-stack]::after{left:calc(50% - 25px);top:-7px;width:10px;height:10px}
+}
+</style>`;
+  return replaceOnce(source, '</head>', css + '\n</head>', 'solo organized pot and opponent stacks');
+}
+
 function patchMultiplayerHtml(source) {
-  if (source.includes(CLIENT_MARKER)) return patchProfessionalPotSeatLayoutClient(patchGameplayVisualFixesClient(patchPremiumTablePresentationClient(patchProfessionalTableClient(patchAllInShowdownClient(patchBustTopUpClient(source))))));
+  if (source.includes(CLIENT_MARKER)) return patchOrganizedPotOpponentStacksClient(patchProfessionalPotSeatLayoutClient(patchGameplayVisualFixesClient(patchPremiumTablePresentationClient(patchProfessionalTableClient(patchAllInShowdownClient(patchBustTopUpClient(source)))))));
 
   source = replaceOnce(
     source,
@@ -1179,11 +1264,11 @@ let clientTimeoutActionKey = '';`,
     'explicit check versus call action'
   );
 
-  return patchProfessionalPotSeatLayoutClient(patchGameplayVisualFixesClient(patchPremiumTablePresentationClient(patchProfessionalTableClient(patchAllInShowdownClient(patchBustTopUpClient(source))))));
+  return patchOrganizedPotOpponentStacksClient(patchProfessionalPotSeatLayoutClient(patchGameplayVisualFixesClient(patchPremiumTablePresentationClient(patchProfessionalTableClient(patchAllInShowdownClient(patchBustTopUpClient(source)))))));
 }
 
 function patchIndex(source) {
-  source = patchSoloProfessionalPotSeatLayout(patchSoloGameplayVisualFixes(patchSoloTablePresentation(source)));
+  source = patchSoloOrganizedPotOpponentStacks(patchSoloProfessionalPotSeatLayout(patchSoloGameplayVisualFixes(patchSoloTablePresentation(source))));
   const match = source.match(/const encoded='([A-Za-z0-9+/=]+)';/);
   if (!match) throw new Error('V55 patch could not locate the embedded multiplayer client.');
   const multiplayer = Buffer.from(match[1], 'base64').toString('utf8');
@@ -1231,4 +1316,4 @@ if (require.main === module) {
   catch (err) { console.error(`Sivel Poker V55 patch failed: ${err.message}`); process.exit(1); }
 }
 
-module.exports = { patchServer, patchSoloTablePresentation, patchSoloGameplayVisualFixes, patchSoloProfessionalPotSeatLayout, patchProfessionalPotSeatLayoutClient, patchMultiplayerHtml, patchIndex };
+module.exports = { patchServer, patchSoloTablePresentation, patchSoloGameplayVisualFixes, patchSoloProfessionalPotSeatLayout, patchSoloOrganizedPotOpponentStacks, patchProfessionalPotSeatLayoutClient, patchOrganizedPotOpponentStacksClient, patchMultiplayerHtml, patchIndex };
