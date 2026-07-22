@@ -17,6 +17,15 @@ function replaceOnce(source, needle, replacement, label) {
   return source.slice(0, first) + replacement + source.slice(first + needle.length);
 }
 
+function replaceBetweenOnce(source, startNeedle, endNeedle, replacement, label) {
+  const start = source.indexOf(startNeedle);
+  if (start < 0) throw new Error(`V55 patch could not find the start of ${label}.`);
+  if (source.indexOf(startNeedle, start + startNeedle.length) >= 0) throw new Error(`V55 patch found more than one start for ${label}; refusing an ambiguous change.`);
+  const end = source.indexOf(endNeedle, start + startNeedle.length);
+  if (end < 0) throw new Error(`V55 patch could not find the end of ${label}.`);
+  return source.slice(0, start) + replacement + source.slice(end);
+}
+
 function patchBustTopUpServer(source) {
   if (source.includes('SIVEL_BUST_TOP_UP_SERVER_FIX')) {
     if (source.includes('schedulePublicPlay(room, 700);')) {
@@ -872,8 +881,126 @@ settleHand=function(winnerIndices,wasShowdown){soloPublicBaseSettleHand(winnerIn
   return source;
 }
 
+
+function patchGameplayVisualFixesClient(source) {
+  if (source.includes('SIVEL_GAMEPLAY_VISUAL_FIXES')) return source;
+
+  const visualCss = `<style id="sivel-gameplay-visual-fixes">
+/* SIVEL_GAMEPLAY_VISUAL_FIXES — stable hole cards, unobstructed pot, and non-blocking hand results. */
+.center{display:flex!important;flex-direction:column!important;align-items:center!important;justify-content:center!important;top:52%!important}
+.center .board{order:1!important;margin:12px auto 25px!important}
+.center .pot{order:2!important;position:relative!important;z-index:12!important;display:flex!important;align-items:center!important;justify-content:center!important;min-width:108px!important;margin:3px auto 7px!important;padding:7px 13px!important;line-height:1!important;box-shadow:0 8px 18px rgba(0,0,0,.34),inset 0 1px 0 rgba(255,255,255,.06)!important}
+.center .status{order:3!important;margin:0 auto!important}
+.center .result{order:3!important;position:relative!important;left:auto!important;right:auto!important;top:auto!important;bottom:auto!important;transform:none!important;z-index:13!important;width:min(430px,94%)!important;margin:0 auto!important;padding:9px 14px!important;border-radius:13px!important;background:rgba(5,11,17,.94)!important;box-shadow:0 9px 22px rgba(0,0,0,.42),inset 0 1px 0 rgba(255,255,255,.06)!important}
+.center .result strong{font-size:18px!important;line-height:1.05!important}.center .result span{font-size:10px!important;line-height:1.3!important;margin-top:4px!important}
+.seat-cards{isolation:isolate}.seat-cards .seat-card{visibility:visible}
+@media(max-width:760px){.center{top:52%!important}.center .board{margin-bottom:22px!important}.center .pot{min-width:92px!important;padding:6px 10px!important}.center .result{width:min(330px,96%)!important;padding:8px 10px!important}.center .result strong{font-size:15px!important}}
+</style>`;
+  source = replaceOnce(source, '</head>', visualCss + '\n</head>', 'gameplay visual-fix styles');
+
+  source = replaceOnce(
+    source,
+    '<div class="status" id="gameStatus">Waiting for the table.</div></div><div class="result hidden" id="resultBox"><strong id="resultTitle"></strong><span id="resultDetail"></span></div></div>',
+    '<div class="status" id="gameStatus">Waiting for the table.</div><div class="result hidden" id="resultBox"><strong id="resultTitle"></strong><span id="resultDetail"></span></div></div></div>',
+    'inline multiplayer result placement'
+  );
+
+  const stableSeatRuntime = `
+/* SIVEL_GAMEPLAY_VISUAL_FIXES runtime */
+/* SIVEL_ALL_IN_SHOWDOWN_CLIENT_FIX retained by the stable seat renderer. */
+const sivelStableSeatNodes=new Map();
+function sivelStableCardKey(card){return card&&card.r&&card.s?String(card.r)+String(card.s):'?'}
+function sivelStableSeatClass(p,originalIndex,slot,g,showdownRevealed){return 'seat slot-'+slot+(p.isSelf?' self-seat':'')+(showdownRevealed?' showdown-revealed':'')+(p.sittingOut?' sitting-out':'')+(g.currentActor===originalIndex&&!g.handOver?' active':'')+(p.folded?' folded':'')+(!p.connected?' disconnected':'')}
+function renderStableMultiplayerSeats(assignments,g){
+  const container=$('seats');if(!container)return;
+  const desired=new Set();
+  assignments.forEach(function(assignment){
+    const p=assignment.p,originalIndex=assignment.originalIndex,slot=assignment.slot,key=String(originalIndex);desired.add(key);
+    let record=sivelStableSeatNodes.get(key);
+    if(record&&(!record.root.isConnected||record.root.parentElement!==container||record.playerName!==String(p.name||''))){try{record.root.remove()}catch(_e){}sivelStableSeatNodes.delete(key);record=null}
+    if(!record){
+      const root=document.createElement('div');root.dataset.playerIndex=String(originalIndex);
+      root.innerHTML='<div class="seat-cards"></div><div class="bet-chip"></div><div class="seat-core"><div class="avatar"></div><div class="seat-name"><strong></strong><span></span><span class="seat-status-tag hidden"></span></div><div class="position-badges"><span class="badge sivel-position-d hidden">D</span><span class="blind-badge sivel-position-sb hidden">SB</span><span class="blind-badge sivel-position-bb hidden">BB</span></div></div>';
+      container.appendChild(root);
+      record={root:root,cards:root.querySelector('.seat-cards'),bet:root.querySelector('.bet-chip'),avatar:root.querySelector('.avatar'),name:root.querySelector('.seat-name strong'),stack:root.querySelector('.seat-name>span:not(.seat-status-tag)'),status:root.querySelector('.seat-status-tag'),dealer:root.querySelector('.sivel-position-d'),smallBlind:root.querySelector('.sivel-position-sb'),bigBlind:root.querySelector('.sivel-position-bb'),cardSig:null,betSig:null,nameSig:null,playerName:String(p.name||'')};
+      sivelStableSeatNodes.set(key,record);
+    }
+    container.appendChild(record.root);
+    record.root.dataset.playerIndex=String(originalIndex);
+    const showdownRevealed=!p.isSelf&&(p.hole||[]).length===2&&((g.handOver&&g.phase==='complete')||g.phase==='runout');
+    record.root.className=sivelStableSeatClass(p,originalIndex,slot,g,showdownRevealed);
+    const avatarText=avatarFor(p);if(record.avatar.textContent!==avatarText)record.avatar.textContent=avatarText;
+    const nameMarkup=esc(p.name)+(p.isAdmin?' <span class="admin-seat-mark">ADMIN</span>':'')+(p.isSelf?' · YOU':'');if(record.nameSig!==nameMarkup){record.name.innerHTML=nameMarkup;record.nameSig=nameMarkup}
+    record.stack.textContent=Number(p.chips||0).toLocaleString();
+    const statusText=p.allIn?'ALL-IN':p.sittingOut?'SITTING OUT':p.leaveAfterHand?'LEAVING AFTER HAND':p.sitOutNextHand?'SIT OUT NEXT':'';
+    record.status.textContent=statusText;record.status.className='seat-status-tag'+(p.allIn?' all-in':'')+(statusText?'':' hidden');
+    record.dealer.classList.toggle('hidden',originalIndex!==g.dealerIndex);record.smallBlind.classList.toggle('hidden',originalIndex!==g.sbIndex);record.bigBlind.classList.toggle('hidden',originalIndex!==g.bbIndex);
+    const cardSig=(p.hole||[]).map(sivelStableCardKey).join('|');
+    if(cardSig!==record.cardSig){record.cards.innerHTML=(p.hole||[]).map(function(card){return cardHtml(card)}).join('');record.cardSig=cardSig}
+    const betSig=Number(p.streetBet||0);if(betSig!==record.betSig){record.bet.innerHTML=betSig?(window.SivelPremiumChips?.betMarkup(betSig)||('● '+betSig)):'';record.betSig=betSig}
+  });
+  Array.from(sivelStableSeatNodes.entries()).forEach(function(entry){if(!desired.has(entry[0])){try{entry[1].root.remove()}catch(_e){}sivelStableSeatNodes.delete(entry[0])}});
+}`;
+  source = replaceOnce(source, 'async function api(path,body={}){', stableSeatRuntime + '\nasync function api(path,body={}){', 'stable multiplayer seat renderer');
+
+  source = replaceBetweenOnce(
+    source,
+    `const assignments=visualSeatAssignments(state.players,state.players.length);$('seats').innerHTML=assignments.map`,
+    `  window.SivelPremiumChips?.sync(state);`,
+    `const assignments=visualSeatAssignments(state.players,state.players.length);renderStableMultiplayerSeats(assignments,g);\n`,
+    'multiplayer seat repaint replacement'
+  );
+
+  source = replaceOnce(
+    source,
+    `$('gameStatus').textContent='Waiting for players…';`,
+    `$('gameStatus').classList.remove('hidden');$('gameStatus').textContent='Waiting for players…';`,
+    'waiting-table status visibility'
+  );
+
+  source = replaceOnce(
+    source,
+    `const validResult=!!(g.handOver&&g.phase==='complete'&&g.handNo>0&&g.result&&Number(g.result.handId)===Number(g.handId)&&Number(g.result.handNo)===Number(g.handNo));if(validResult){`,
+    `const validResult=!!(g.handOver&&g.phase==='complete'&&g.handNo>0&&g.result&&Number(g.result.handId)===Number(g.handId)&&Number(g.result.handNo)===Number(g.handNo));$('gameStatus').classList.toggle('hidden',validResult);if(validResult){`,
+    'result/status shared presentation area'
+  );
+
+  return source;
+}
+
+function patchSoloGameplayVisualFixes(source) {
+  if (source.includes('SIVEL_SOLO_GAMEPLAY_VISUAL_FIXES')) return source;
+
+  const css = `<style id="sivel-solo-gameplay-visual-fixes">
+/* SIVEL_SOLO_GAMEPLAY_VISUAL_FIXES — clear pot lane and inline showdown result. */
+#gameScreen .center-table{display:flex!important;flex-direction:column!important;align-items:center!important;justify-content:center!important;top:48%!important}
+#gameScreen .center-table .board{order:1!important;margin:12px auto 25px!important}
+#gameScreen .center-table .pot{order:2!important;position:relative!important;z-index:12!important;display:flex!important;align-items:center!important;justify-content:center!important;min-width:108px!important;margin:3px auto 7px!important;padding:7px 13px!important;line-height:1!important;box-shadow:0 8px 18px rgba(0,0,0,.34),inset 0 1px 0 rgba(255,255,255,.06)!important}
+#gameScreen .center-table .hand-result{order:3!important;display:block!important;min-height:0!important;width:min(430px,94%)!important;margin:0 auto!important;padding:9px 14px!important;border-radius:13px!important;background:rgba(5,11,17,.94)!important;border:1px solid rgba(255,255,255,.10)!important;box-shadow:0 9px 22px rgba(0,0,0,.42),inset 0 1px 0 rgba(255,255,255,.06)!important;opacity:0!important;visibility:hidden!important;transform:translateY(5px)!important;pointer-events:none!important}
+#gameScreen .center-table .hand-result.show{opacity:1!important;visibility:visible!important;transform:none!important}
+#gameScreen .center-table .hand-result:before{display:none!important}
+#gameScreen .center-table .hand-result strong{font-size:18px!important;line-height:1.05!important}#gameScreen .center-table .hand-result span{font-size:10px!important;line-height:1.3!important;margin-top:4px!important}
+#gameScreen .center-table .status{order:3!important;margin:0 auto!important}
+#resultOverlay{display:none!important}
+@media(max-width:860px){#gameScreen .center-table{top:48%!important}#gameScreen .center-table .board{margin-bottom:22px!important}#gameScreen .center-table .pot{min-width:92px!important;padding:6px 10px!important}#gameScreen .center-table .hand-result{width:min(330px,96%)!important;padding:8px 10px!important}#gameScreen .center-table .hand-result strong{font-size:15px!important}}
+</style>`;
+  source = replaceOnce(source, '</head>', css + '\n</head>', 'solo gameplay visual-fix styles');
+
+  const runtime = `
+/* SIVEL_SOLO_GAMEPLAY_VISUAL_FIXES runtime */
+const sivelInlineBaseHideHandResult=hideHandResult;
+hideHandResult=function(clearContent){sivelInlineBaseHideHandResult(clearContent);const box=$('handResult');if(box){box.className='hand-result';if(clearContent){$('handResultTitle').textContent='';$('handResultDetail').textContent=''}}const status=$('status');if(status)status.classList.remove('hidden')};
+showHandResult=function(type,title,detail,expectedToken){
+  expectedToken=expectedToken==null?handToken:expectedToken;
+  const display=function(){if(!state||expectedToken!==handToken||!state.handOver||state.phase!=='complete'||state.completedHandToken!==expectedToken||state.handNo<1)return;const box=$('handResult');if(!box)return;box.className='hand-result show '+type;$('handResultTitle').textContent=title;const split=String(detail||'').split(' · ');const first=(split.shift()||'SHOWDOWN').toUpperCase();$('handResultDetail').textContent=first+(split.length?' · '+split.join(' · '):'');const status=$('status');if(status)status.classList.add('hidden');playResultSound(type);flashTable(type);clearTimeout(showHandResult.timer);showHandResult.timer=setTimeout(function(){hideHandResult(false)},1900)};
+  clearTimeout(showHandResult.timer);const showdownResult=!!(state&&state.reveal&&state.phase==='complete'&&!/NO SHOWDOWN/i.test(String(detail||'')));showHandResult.timer=setTimeout(display,showdownResult?850:0)
+};`;
+  source = replaceOnce(source, `$('playTableBtn').onclick=startSession;`, runtime + `\n$('playTableBtn').onclick=startSession;`, 'inline solo result runtime');
+  return source;
+}
+
 function patchMultiplayerHtml(source) {
-  if (source.includes(CLIENT_MARKER)) return patchPremiumTablePresentationClient(patchProfessionalTableClient(patchAllInShowdownClient(patchBustTopUpClient(source))));
+  if (source.includes(CLIENT_MARKER)) return patchGameplayVisualFixesClient(patchPremiumTablePresentationClient(patchProfessionalTableClient(patchAllInShowdownClient(patchBustTopUpClient(source)))));
 
   source = replaceOnce(
     source,
@@ -964,11 +1091,11 @@ let clientTimeoutActionKey = '';`,
     'explicit check versus call action'
   );
 
-  return patchPremiumTablePresentationClient(patchProfessionalTableClient(patchAllInShowdownClient(patchBustTopUpClient(source))));
+  return patchGameplayVisualFixesClient(patchPremiumTablePresentationClient(patchProfessionalTableClient(patchAllInShowdownClient(patchBustTopUpClient(source)))));
 }
 
 function patchIndex(source) {
-  source = patchSoloTablePresentation(source);
+  source = patchSoloGameplayVisualFixes(patchSoloTablePresentation(source));
   const match = source.match(/const encoded='([A-Za-z0-9+/=]+)';/);
   if (!match) throw new Error('V55 patch could not locate the embedded multiplayer client.');
   const multiplayer = Buffer.from(match[1], 'base64').toString('utf8');
@@ -1016,4 +1143,4 @@ if (require.main === module) {
   catch (err) { console.error(`Sivel Poker V55 patch failed: ${err.message}`); process.exit(1); }
 }
 
-module.exports = { patchServer, patchSoloTablePresentation, patchMultiplayerHtml, patchIndex };
+module.exports = { patchServer, patchSoloTablePresentation, patchSoloGameplayVisualFixes, patchMultiplayerHtml, patchIndex };
