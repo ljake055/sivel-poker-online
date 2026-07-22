@@ -18,7 +18,17 @@ function replaceOnce(source, needle, replacement, label) {
 }
 
 function patchBustTopUpServer(source) {
-  if (source.includes('SIVEL_BUST_TOP_UP_SERVER_FIX')) return source;
+  if (source.includes('SIVEL_BUST_TOP_UP_SERVER_FIX')) {
+    if (source.includes('schedulePublicPlay(room, 700);')) {
+      return replaceOnce(
+        source,
+        'schedulePublicPlay(room, 700);',
+        'schedulePublicPlay(room, PUBLIC_NEXT_HAND_MS);',
+        'top-up result-display hold'
+      );
+    }
+    return source;
+  }
   return replaceOnce(
     source,
 `  player.walletBalance = Number(result.account.bankroll);
@@ -35,14 +45,202 @@ function patchBustTopUpServer(source) {
   systemChat(room, \`${'${player.name}'} topped up to ${'${player.chips.toLocaleString()}'} chips.\`);
   // SIVEL_BUST_TOP_UP_SERVER_FIX — a busted public seat can refill and automatically re-enter play.
   broadcast(room);
-  if (room.isPublic && room.game && room.game.handOver) schedulePublicPlay(room, 700);
+  if (room.isPublic && room.game && room.game.handOver) schedulePublicPlay(room, PUBLIC_NEXT_HAND_MS);
   return result;`,
     'busted-seat top-up restart'
   );
 }
 
+function patchAllInShowdownServer(source) {
+  if (source.includes('SIVEL_ALL_IN_SHOWDOWN_FIX')) return source;
+
+  source = replaceOnce(
+    source,
+`function schedulePublicPlay(room, delay = PUBLIC_NEXT_HAND_MS) {
+  if (!room || !room.isPublic) return;
+  clearPublicNextTimer(room);
+  if (room.adminPaused) {
+    if (room.game && room.game.handOver) {
+      room.game.phase = 'waiting';
+      room.game.currentActor = null;
+      room.game.status = 'Table paused by administration.';
+    }
+    broadcast(room);
+    return;
+  }
+  const enoughPlayers = room.stage === 'lobby' ? seatedPlayers(room).filter(player => !player.sittingOut).length >= 2 : activeIndices(room).length >= 2;
+  if (!enoughPlayers) {
+    if (room.game) {
+      room.game.handOver = true;
+      room.game.tableOver = false;
+      room.game.currentActor = null;
+      room.game.phase = 'waiting';
+      room.game.board = [];
+      room.game.street = 'preflop';
+      room.game.pot = 0;
+      room.game.reveal = false;
+      room.game.result = null;
+      room.game.status = 'Waiting for another player to take a seat.';
+    }
+    broadcast(room);
+    return;
+  }
+  room.publicNextTimer = setTimeout(() => {
+    room.publicNextTimer = null;
+    try {
+      compactPublicPlayers(room);
+      if (room.stage === 'lobby') startTable(room);
+      else if (room.game && room.game.handOver && !room.game.tableOver && activeIndices(room).length >= 2) startHand(room);
+    } catch (err) {
+      console.error(\`Unable to continue public table ${'${room.code}'}:\`, err);
+      if (room.game) room.game.status = 'The table is waiting to restart.';
+      broadcast(room);
+    }
+  }, Math.max(250, Number(delay) || PUBLIC_NEXT_HAND_MS));
+  if (room.publicNextTimer.unref) room.publicNextTimer.unref();
+}`,
+`function movePublicTableToWaiting(room) {
+  if (!room || !room.game) return;
+  room.game.handOver = true;
+  room.game.tableOver = false;
+  room.game.currentActor = null;
+  room.game.phase = 'waiting';
+  room.game.board = [];
+  room.game.street = 'preflop';
+  room.game.pot = 0;
+  room.game.reveal = false;
+  room.game.result = null;
+  const seatedCount = seatedPlayers(room).length;
+  room.game.status = seatedCount >= 2
+    ? 'Waiting for another player to top up or return.'
+    : 'Waiting for another player to take a seat.';
+  broadcast(room);
+}
+
+function schedulePublicPlay(room, delay = PUBLIC_NEXT_HAND_MS) {
+  if (!room || !room.isPublic) return;
+  clearPublicNextTimer(room);
+  if (room.adminPaused) {
+    if (room.game && room.game.handOver) {
+      room.game.phase = 'waiting';
+      room.game.currentActor = null;
+      room.game.status = 'Table paused by administration.';
+    }
+    broadcast(room);
+    return;
+  }
+  const enoughPlayers = room.stage === 'lobby'
+    ? seatedPlayers(room).filter(player => !player.sittingOut).length >= 2
+    : activeIndices(room).length >= 2;
+  const preserveCompletedResult = !!(room.game && room.game.handOver && room.game.phase === 'complete' && room.game.result);
+  const requestedDelay = Math.max(250, Number(delay) || PUBLIC_NEXT_HAND_MS);
+  const displayDelay = preserveCompletedResult ? Math.max(PUBLIC_NEXT_HAND_MS, requestedDelay) : requestedDelay;
+
+  if (!enoughPlayers) {
+    if (!preserveCompletedResult) {
+      movePublicTableToWaiting(room);
+      return;
+    }
+    room.publicNextTimer = setTimeout(() => {
+      room.publicNextTimer = null;
+      try {
+        if (!room.game || !room.game.handOver) return;
+        compactPublicPlayers(room);
+        if (activeIndices(room).length >= 2) startHand(room);
+        else movePublicTableToWaiting(room);
+      } catch (err) {
+        console.error(\`Unable to settle public table display ${'${room.code}'}:\`, err);
+        movePublicTableToWaiting(room);
+      }
+    }, displayDelay);
+    if (room.publicNextTimer.unref) room.publicNextTimer.unref();
+    return;
+  }
+
+  room.publicNextTimer = setTimeout(() => {
+    room.publicNextTimer = null;
+    try {
+      compactPublicPlayers(room);
+      if (room.stage === 'lobby') startTable(room);
+      else if (room.game && room.game.handOver && !room.game.tableOver && activeIndices(room).length >= 2) startHand(room);
+    } catch (err) {
+      console.error(\`Unable to continue public table ${'${room.code}'}:\`, err);
+      if (room.game) room.game.status = 'The table is waiting to restart.';
+      broadcast(room);
+    }
+  }, displayDelay);
+  if (room.publicNextTimer.unref) room.publicNextTimer.unref();
+}`,
+    'public showdown result hold'
+  );
+
+  source = replaceOnce(
+    source,
+`function runoutAndShowdown(room, expectedHandId = room.game && room.game.handId) {
+  const game = room.game;
+  if (!game || game.handOver || game.handId !== expectedHandId || !['betting', 'resolving', 'runout'].includes(game.phase)) return;
+  clearTurnTimer(room);
+  game.phase = 'runout';
+  while (game.street !== 'river') advanceStreet(room);
+  showdown(room, expectedHandId);
+}`,
+`function runoutAndShowdown(room, expectedHandId = room.game && room.game.handId) {
+  const game = room.game;
+  if (!game || game.handOver || game.handId !== expectedHandId || !['betting', 'resolving', 'runout'].includes(game.phase)) return;
+  if (game.runoutPending && Number(game.runoutHandId) === Number(expectedHandId)) return;
+  if (game.runoutTimer) clearTimeout(game.runoutTimer);
+  clearTurnTimer(room);
+  game.phase = 'runout';
+  game.currentActor = null;
+  game.turnDeadline = 0;
+  game.reveal = true;
+  game.runoutPending = true;
+  game.runoutHandId = expectedHandId;
+  game.status = 'All-in · hole cards revealed.';
+  // SIVEL_ALL_IN_SHOWDOWN_FIX — reveal every all-in hand and deal the remaining board in visible stages.
+  broadcast(room);
+
+  const continueRunout = () => {
+    const current = room.game;
+    if (current !== game || current.handOver || current.handId !== expectedHandId || current.phase !== 'runout') return;
+    if (current.street !== 'river') {
+      advanceStreet(room);
+      current.status = \`All-in · ${'${capitalize(current.street)}'} dealt.\`;
+      broadcast(room);
+      current.runoutTimer = setTimeout(continueRunout, 700);
+      if (current.runoutTimer.unref) current.runoutTimer.unref();
+      return;
+    }
+    current.status = 'All-in · determining the winner…';
+    broadcast(room);
+    current.runoutTimer = setTimeout(() => {
+      current.runoutTimer = null;
+      if (room.game !== game || game.handOver || game.handId !== expectedHandId || game.phase !== 'runout') return;
+      game.runoutPending = false;
+      game.runoutHandId = null;
+      showdown(room, expectedHandId);
+    }, 850);
+    if (current.runoutTimer.unref) current.runoutTimer.unref();
+  };
+
+  game.runoutTimer = setTimeout(continueRunout, 550);
+  if (game.runoutTimer.unref) game.runoutTimer.unref();
+}`,
+    'visible all-in board runout'
+  );
+
+  source = replaceOnce(
+    source,
+`    const revealHole = game && game.handOver && game.phase === 'complete' && game.reveal && p.inHand && !p.folded;`,
+`    const revealHole = game && game.reveal && p.inHand && !p.folded && ((game.handOver && game.phase === 'complete') || game.phase === 'runout');`,
+    'all-in hole-card visibility'
+  );
+
+  return source;
+}
+
 function patchServer(source) {
-  if (source.includes(SERVER_MARKER)) return patchBustTopUpServer(source);
+  if (source.includes(SERVER_MARKER)) return patchAllInShowdownServer(patchBustTopUpServer(source));
 
   source = replaceOnce(
     source,
@@ -326,7 +524,7 @@ function armTurnTimer(room) {
     'health authority version'
   );
 
-  return patchBustTopUpServer(source);
+  return patchAllInShowdownServer(patchBustTopUpServer(source));
 }
 
 function patchBustTopUpClient(source) {
@@ -343,8 +541,19 @@ function patchBustTopUpClient(source) {
   );
 }
 
+
+function patchAllInShowdownClient(source) {
+  if (source.includes('SIVEL_ALL_IN_SHOWDOWN_CLIENT_FIX')) return source;
+  return replaceOnce(
+    source,
+`const showdownRevealed=!p.isSelf&&g.handOver&&g.phase==='complete'&&(p.hole||[]).length===2;`,
+`const showdownRevealed=!p.isSelf&&(p.hole||[]).length===2&&((g.handOver&&g.phase==='complete')||g.phase==='runout');/* SIVEL_ALL_IN_SHOWDOWN_CLIENT_FIX */`,
+    'all-in opponent-card presentation'
+  );
+}
+
 function patchMultiplayerHtml(source) {
-  if (source.includes(CLIENT_MARKER)) return patchBustTopUpClient(source);
+  if (source.includes(CLIENT_MARKER)) return patchAllInShowdownClient(patchBustTopUpClient(source));
 
   source = replaceOnce(
     source,
@@ -435,7 +644,7 @@ let clientTimeoutActionKey = '';`,
     'explicit check versus call action'
   );
 
-  return patchBustTopUpClient(source);
+  return patchAllInShowdownClient(patchBustTopUpClient(source));
 }
 
 function patchIndex(source) {
