@@ -554,7 +554,15 @@ function patchAllInShowdownClient(source) {
 
 
 function patchProfessionalTableClient(source) {
-  if (source.includes('SIVEL_PRO_TABLE_CLEANUP')) return source;
+  if (source.includes('SIVEL_PRO_TABLE_CLEANUP')) {
+    if (source.includes('SIVEL_COMMUNITY_BOARD_CENTER_FIX')) return source;
+    return replaceOnce(
+      source,
+      `.center{z-index:6!important;width:64%!important;top:48%!important}.board{position:relative;z-index:7!important;margin:12px 0 26px!important}`,
+      `.center{z-index:6!important;width:64%!important;top:48%!important;left:50%!important;transform:translate(-50%,-50%)!important;text-align:center!important}.board{position:relative;z-index:7!important;margin:12px auto 26px!important;left:auto!important;right:auto!important}/* SIVEL_COMMUNITY_BOARD_CENTER_FIX */`,
+      'community-card board centering'
+    );
+  }
 
   source = replaceOnce(
     source,
@@ -587,7 +595,7 @@ function patchProfessionalTableClient(source) {
 .table-host-avatar{width:34px!important;height:34px!important;font-size:21px!important;border-width:1px!important;box-shadow:0 0 0 2px #0b1118!important}
 .table-host-copy{min-width:68px!important}.table-host-copy small{font-size:6px!important;letter-spacing:.18em!important}.table-host-copy strong{font-size:12px!important}.table-host-copy span{display:none!important}
 .table-center-brand{display:none!important}
-.center{z-index:6!important;width:64%!important;top:48%!important}.board{position:relative;z-index:7!important;margin:12px 0 26px!important}.board::after{content:'SIVEL POKER · OFFICIAL CASH TABLE';position:absolute;left:50%;bottom:-18px;transform:translateX(-50%);font-size:6px;font-weight:950;letter-spacing:.25em;color:color-mix(in srgb,var(--table-metal) 48%,transparent);white-space:nowrap;text-shadow:0 1px 5px rgba(0,0,0,.45)}.board-slot{position:relative;z-index:7!important}.status{position:relative;z-index:7!important;min-width:250px!important;padding:8px 14px!important;background:rgba(3,9,14,.88)!important;border-color:rgba(255,255,255,.10)!important;box-shadow:0 8px 20px rgba(0,0,0,.34)!important}
+.center{z-index:6!important;width:64%!important;top:48%!important;left:50%!important;transform:translate(-50%,-50%)!important;text-align:center!important}.board{position:relative;z-index:7!important;margin:12px auto 26px!important;left:auto!important;right:auto!important}/* SIVEL_COMMUNITY_BOARD_CENTER_FIX */.board::after{content:'SIVEL POKER · OFFICIAL CASH TABLE';position:absolute;left:50%;bottom:-18px;transform:translateX(-50%);font-size:6px;font-weight:950;letter-spacing:.25em;color:color-mix(in srgb,var(--table-metal) 48%,transparent);white-space:nowrap;text-shadow:0 1px 5px rgba(0,0,0,.45)}.board-slot{position:relative;z-index:7!important}.status{position:relative;z-index:7!important;min-width:250px!important;padding:8px 14px!important;background:rgba(3,9,14,.88)!important;border-color:rgba(255,255,255,.10)!important;box-shadow:0 8px 20px rgba(0,0,0,.34)!important}
 .seat-core{position:relative!important;padding-right:12px!important}.position-badges{position:absolute;right:-18px;top:50%;transform:translateY(-50%);display:flex;flex-direction:column;align-items:center;gap:3px;z-index:4}.position-badges:empty{display:none}.position-badges .badge,.blind-badge{width:24px;height:24px;border-radius:50%;display:grid;place-items:center;font-size:8px;font-weight:950;line-height:1;box-shadow:0 4px 10px rgba(0,0,0,.42)}.position-badges .badge{background:linear-gradient(180deg,#fffdf5,#d7d2c5);color:#171717;border:2px solid #aaa393}.blind-badge{height:18px;border-radius:9px;background:linear-gradient(180deg,#25384b,#101b27);color:#f2d388;border:1px solid #7c6740}
 .seat.active .seat-core{border-color:#62b9f3!important;box-shadow:0 0 0 3px rgba(84,177,239,.14),0 10px 18px rgba(0,0,0,.5)!important}.seat.folded{opacity:.48!important}.seat-status-tag.all-in{color:#ffd875!important;background:#3a290f;border:1px solid #8c6722;border-radius:5px;padding:2px 5px;width:max-content}
 .action-row{grid-template-columns:minmax(100px,.85fr) minmax(120px,1fr) minmax(230px,1.65fr) minmax(145px,1.1fr)!important}.action-btn{height:52px!important;border-radius:12px!important;letter-spacing:.02em!important;box-shadow:inset 0 1px 0 rgba(255,255,255,.06),0 7px 14px rgba(0,0,0,.22)}.action-btn:not(:disabled):active{transform:translateY(1px)}
