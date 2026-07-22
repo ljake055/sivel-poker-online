@@ -17,8 +17,32 @@ function replaceOnce(source, needle, replacement, label) {
   return source.slice(0, first) + replacement + source.slice(first + needle.length);
 }
 
+function patchBustTopUpServer(source) {
+  if (source.includes('SIVEL_BUST_TOP_UP_SERVER_FIX')) return source;
+  return replaceOnce(
+    source,
+`  player.walletBalance = Number(result.account.bankroll);
+  log(room, \`${'${player.name}'} tops up ${'${amount}'} chips.\`);
+  systemChat(room, \`${'${player.name}'} topped up to ${'${player.chips.toLocaleString()}'} chips.\`);
+  broadcast(room);
+  return result;`,
+`  player.walletBalance = Number(result.account.bankroll);
+  player.waitingForNextHand = !player.sittingOut;
+  player.allIn = false;
+  player.folded = true;
+  player.inHand = false;
+  log(room, \`${'${player.name}'} tops up ${'${amount}'} chips.\`);
+  systemChat(room, \`${'${player.name}'} topped up to ${'${player.chips.toLocaleString()}'} chips.\`);
+  // SIVEL_BUST_TOP_UP_SERVER_FIX — a busted public seat can refill and automatically re-enter play.
+  broadcast(room);
+  if (room.isPublic && room.game && room.game.handOver) schedulePublicPlay(room, 700);
+  return result;`,
+    'busted-seat top-up restart'
+  );
+}
+
 function patchServer(source) {
-  if (source.includes(SERVER_MARKER)) return source;
+  if (source.includes(SERVER_MARKER)) return patchBustTopUpServer(source);
 
   source = replaceOnce(
     source,
@@ -302,11 +326,25 @@ function armTurnTimer(room) {
     'health authority version'
   );
 
-  return source;
+  return patchBustTopUpServer(source);
+}
+
+function patchBustTopUpClient(source) {
+  if (source.includes('SIVEL_BUST_TOP_UP_CLIENT_FIX')) return source;
+  return replaceOnce(
+    source,
+`  const controls=document.querySelector('.controls');if(controls)controls.classList.add('waiting-controls');const tools=$('tableTools');if(tools)tools.classList.add('hidden');
+  $('nextHandBtn').classList.add('hidden');`,
+`  // SIVEL_BUST_TOP_UP_CLIENT_FIX — betting actions stay disabled, but table controls remain usable while waiting.
+  const controls=document.querySelector('.controls');if(controls)controls.classList.remove('waiting-controls');
+  renderTableControls();
+  $('nextHandBtn').classList.add('hidden');`,
+    'waiting-table top-up controls'
+  );
 }
 
 function patchMultiplayerHtml(source) {
-  if (source.includes(CLIENT_MARKER)) return source;
+  if (source.includes(CLIENT_MARKER)) return patchBustTopUpClient(source);
 
   source = replaceOnce(
     source,
@@ -397,7 +435,7 @@ let clientTimeoutActionKey = '';`,
     'explicit check versus call action'
   );
 
-  return source;
+  return patchBustTopUpClient(source);
 }
 
 function patchIndex(source) {
