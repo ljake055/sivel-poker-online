@@ -657,8 +657,82 @@ function patchProfessionalTableClient(source) {
   return source;
 }
 
+
+function patchPremiumTablePresentationClient(source) {
+  if (source.includes('SIVEL_PREMIUM_TABLE_PRESENTATION')) return source;
+
+  const presentationCss = `<style id="sivel-premium-table-presentation">
+/* SIVEL_PREMIUM_TABLE_PRESENTATION — restrained casino-grade dealing, reveal, pot, and action feedback. */
+.table-stage{perspective:1200px}.seat-card,.board-slot{backface-visibility:hidden;transform-style:preserve-3d}
+.seat-card.sivel-deal-in{animation:sivelDealIn .62s cubic-bezier(.18,.78,.22,1) both;will-change:translate,rotate,scale,opacity,filter}
+.board-slot.sivel-board-reveal{animation:sivelBoardReveal .58s cubic-bezier(.2,.78,.18,1) both;will-change:rotate,scale,opacity,filter}
+.seat-card.sivel-showdown-reveal{animation:sivelShowdownReveal .62s cubic-bezier(.2,.72,.22,1) both;will-change:rotate,scale,opacity,filter}
+.pot-display.sivel-pot-pulse,.pot-box.sivel-pot-pulse{animation:sivelPotPulse .48s ease-out both}
+.sivel-action-pop{position:absolute;left:50%;top:-11px;z-index:18;translate:-50% 0;padding:5px 9px;border-radius:999px;border:1px solid rgba(255,255,255,.18);background:linear-gradient(180deg,rgba(11,20,29,.98),rgba(4,9,14,.98));box-shadow:0 7px 20px rgba(0,0,0,.55),inset 0 1px 0 rgba(255,255,255,.08);font-size:8px;font-weight:950;letter-spacing:.12em;color:#e8f3ff;white-space:nowrap;pointer-events:none;animation:sivelActionPop 1.05s ease-out both}
+.sivel-action-pop.check{color:#aee3ff;border-color:rgba(84,177,239,.35)}.sivel-action-pop.call{color:#bff5d8;border-color:rgba(72,208,139,.34)}.sivel-action-pop.raise,.sivel-action-pop.bet{color:#ffe29a;border-color:rgba(232,185,91,.4)}.sivel-action-pop.fold{color:#c3ccd6}.sivel-action-pop.allin{color:#ffd46e;border-color:rgba(255,181,55,.55);box-shadow:0 7px 22px rgba(0,0,0,.58),0 0 18px rgba(255,173,44,.18)}
+@keyframes sivelDealIn{0%{opacity:0;translate:var(--deal-x,0) var(--deal-y,-160px);rotate:var(--deal-rot,-9deg);scale:.72;filter:blur(1px) brightness(1.18)}68%{opacity:1;translate:0 -3px;rotate:0deg;scale:1.025;filter:none}100%{opacity:1;translate:0 0;rotate:0deg;scale:1;filter:none}}
+@keyframes sivelBoardReveal{0%{opacity:.16;rotate:0 1 0 92deg;scale:.82;filter:brightness(1.28)}58%{opacity:1;rotate:0 1 0 -7deg;scale:1.035;filter:none}100%{opacity:1;rotate:0 1 0 0deg;scale:1;filter:none}}
+@keyframes sivelShowdownReveal{0%{opacity:.35;rotate:0 1 0 88deg;scale:.9;filter:brightness(1.3)}55%{opacity:1;rotate:0 1 0 -8deg;scale:1.035;filter:none}100%{opacity:1;rotate:0 1 0 0deg;scale:1;filter:none}}
+@keyframes sivelPotPulse{0%{scale:1;filter:brightness(1)}42%{scale:1.08;filter:brightness(1.25)}100%{scale:1;filter:brightness(1)}}
+@keyframes sivelActionPop{0%{opacity:0;translate:-50% 7px;scale:.88}16%{opacity:1;translate:-50% 0;scale:1.03}72%{opacity:1;translate:-50% -1px;scale:1}100%{opacity:0;translate:-50% -9px;scale:.98}}
+@media(prefers-reduced-motion:reduce){.seat-card.sivel-deal-in,.board-slot.sivel-board-reveal,.seat-card.sivel-showdown-reveal,.pot-display.sivel-pot-pulse,.pot-box.sivel-pot-pulse,.sivel-action-pop{animation-duration:.01ms!important;animation-delay:0ms!important}}
+</style>`;
+  source = replaceOnce(source, '</head>', presentationCss + '\n</head>', 'premium table presentation styles');
+
+  source = replaceOnce(
+    source,
+`let soundSnapshot=null;
+let tableControlBusy=false;`,
+`let soundSnapshot=null;
+let tableControlBusy=false;
+let visualSnapshot=null;
+let pendingTableMotion=null;`,
+    'premium presentation state'
+  );
+
+  source = replaceOnce(
+    source,
+`    case 'deal':noise(.09,.014,0,500);tone(185,.055,.015,.01,'triangle',130);break;`,
+`    case 'deal':noise(.075,.013,0,620);tone(188,.05,.013,.008,'triangle',132);noise(.07,.011,.105,680);tone(205,.045,.011,.11,'triangle',145);break;`,
+    'professional card-deal sound'
+  );
+
+  source = replaceOnce(
+    source,
+`    case 'check':tone(430,.045,.018,0,'triangle',360);break;`,
+`    case 'check':noise(.025,.012,0,1050);tone(330,.032,.011,.002,'triangle',275);noise(.024,.011,.105,1120);tone(350,.03,.010,.107,'triangle',290);break;
+    case 'reveal':noise(.055,.010,0,760);tone(510,.075,.014,.018,'triangle',690);break;`,
+    'double-tap check and reveal sounds'
+  );
+
+  const motionCode = `
+function visualCardKey(card){return card&&card.r&&card.s?String(card.r)+card.s:'?'}
+function knownHoleCards(player){const cards=player&&Array.isArray(player.hole)?player.hole:[];return cards.length===2&&cards.every(card=>visualCardKey(card)!=='?')}
+function visualDigest(snapshot){const g=snapshot&&snapshot.game;return{stage:snapshot&&snapshot.stage||'',handId:Number(g&&g.handId||0),board:g&&Array.isArray(g.board)?g.board.map(visualCardKey):[],pot:Number(g&&g.pot||0),latest:snapshot&&snapshot.log&&snapshot.log[0]?String(snapshot.log[0].message||''):'',players:(snapshot&&snapshot.players||[]).map((player,index)=>({index:index,name:String(player.name||''),known:knownHoleCards(player)}))}}
+function actionMotionFromLog(message,next){const text=String(message||'');if(!text)return null;const players=next&&next.players||[];const allInPlayer=players.find(item=>text.startsWith(String(item.name||'')+' ')&&/all-in/i.test(text));if(allInPlayer)return{seat:Number(allInPlayer.seat),label:'ALL-IN',kind:'allin'};const matchers=[[/^(.+?) checks\\./i,'CHECK','check'],[/^(.+?) calls ([0-9,]+)/i,'CALL','call'],[/^(.+?) raises to ([0-9,]+)/i,'RAISE TO','raise'],[/^(.+?) bets ([0-9,]+)/i,'BET','bet'],[/^(.+?) folds\\./i,'FOLD','fold']];for(const entry of matchers){const found=text.match(entry[0]);if(!found)continue;const name=found[1].trim();const player=players.find(item=>String(item.name||'')===name);if(!player)continue;const amount=found[2]?' '+found[2]:'';return{seat:Number(player.seat),label:entry[1]+amount,kind:entry[2]}}return null}
+function prepareTableMotion(next){const current=visualDigest(next),previous=visualSnapshot;visualSnapshot=current;if(!previous||current.stage!=='playing'){pendingTableMotion=null;return}const handChanged=!!current.handId&&current.handId!==previous.handId;const boardFrom=handChanged?0:previous.board.length;const newBoard=[];for(let index=boardFrom;index<current.board.length;index++)newBoard.push(index);const revealed=[];current.players.forEach(player=>{const before=previous.players.find(item=>item.index===player.index);if(player.known&&before&&!before.known)revealed.push(player.index)});pendingTableMotion={handChanged:handChanged,newBoard:newBoard,revealed:revealed,potRaised:current.pot>previous.pot,action:current.latest!==previous.latest?actionMotionFromLog(current.latest,next):null}}
+function clearMotionClass(element,className,delay){if(!element)return;setTimeout(()=>element.classList.remove(className),Math.max(700,Number(delay||0)+760))}
+function dealCardsFromDealer(){const stage=document.getElementById('tableStage');if(!stage)return;const stageRect=stage.getBoundingClientRect(),originX=stageRect.left+stageRect.width*.5,originY=stageRect.top+34;const seats=Array.from(document.querySelectorAll('#seats .seat')).sort((a,b)=>Number(a.dataset.playerIndex)-Number(b.dataset.playerIndex));let order=0;for(let cardIndex=0;cardIndex<2;cardIndex++){seats.forEach((seat,seatOrder)=>{const card=seat.querySelectorAll('.seat-cards .seat-card')[cardIndex];if(!card)return;const rect=card.getBoundingClientRect(),delay=order*62;card.style.setProperty('--deal-x',(originX-(rect.left+rect.width/2))+'px');card.style.setProperty('--deal-y',(originY-(rect.top+rect.height/2))+'px');card.style.setProperty('--deal-rot',((seatOrder%2?1:-1)*(7+(seatOrder%3)*2))+'deg');card.style.animationDelay=delay+'ms';card.classList.add('sivel-deal-in');clearMotionClass(card,'sivel-deal-in',delay);order++})}}
+function revealBoardCards(indexes){indexes.forEach((index,order)=>{const slot=document.querySelector('#board .board-slot:nth-child('+(index+1)+')');if(!slot||!slot.querySelector('.seat-card'))return;const delay=order*105;slot.style.animationDelay=delay+'ms';slot.classList.add('sivel-board-reveal');clearMotionClass(slot,'sivel-board-reveal',delay)})}
+function revealHoleCards(seats){if(!seats.length)return;PokerAudio.play('reveal');seats.forEach((seatIndex,seatOrder)=>{const seat=document.querySelector('#seats .seat[data-player-index="'+seatIndex+'"]');if(!seat)return;seat.querySelectorAll('.seat-cards .seat-card').forEach((card,cardIndex)=>{const delay=seatOrder*90+cardIndex*115;card.style.animationDelay=delay+'ms';card.classList.add('sivel-showdown-reveal');clearMotionClass(card,'sivel-showdown-reveal',delay)})})}
+function pulsePot(){const pot=document.getElementById('pot');const holder=pot&&(pot.closest('.pot-display')||pot.closest('.pot-box')||pot.parentElement);if(!holder)return;holder.classList.remove('sivel-pot-pulse');void holder.offsetWidth;holder.classList.add('sivel-pot-pulse');clearMotionClass(holder,'sivel-pot-pulse',0)}
+function showSeatAction(action){if(!action)return;const seat=document.querySelector('#seats .seat[data-player-index="'+action.seat+'"]');if(!seat)return;seat.querySelectorAll('.sivel-action-pop').forEach(node=>node.remove());const badge=document.createElement('span');badge.className='sivel-action-pop '+action.kind;badge.textContent=action.label;seat.appendChild(badge);setTimeout(()=>badge.remove(),1120)}
+function applyTableMotion(){const motion=pendingTableMotion;pendingTableMotion=null;if(!motion)return;if(motion.handChanged)dealCardsFromDealer();if(motion.newBoard.length)revealBoardCards(motion.newBoard);if(motion.revealed.length)revealHoleCards(motion.revealed);if(motion.potRaised)pulsePot();showSeatAction(motion.action)}
+`;
+  source = replaceOnce(source, 'async function api(path,body={}){', motionCode + '\nasync function api(path,body={}){', 'premium motion controller');
+
+  source = replaceOnce(
+    source,
+`function connectEvents(){if(events)events.close();if(!session)return;events=new EventSource(endpoint(\`/api/events?room=${'${encodeURIComponent(session.room)}'}&token=${'${encodeURIComponent(session.token)}'}\`));events.addEventListener('state',e=>{const next=JSON.parse(e.data);if(Number.isFinite(Number(next.serverTime)))serverClockOffset=Number(next.serverTime)-Date.now();handleStateSounds(next);state=next;$('connectionLabel').textContent='Connected';setServerStatus('Connected to multiplayer server',true);render()});events.onerror=()=>{const label=$('connectionLabel'),tip=$('connectionTip');if(label)label.textContent='Reconnecting…';if(tip)tip.textContent='Connection interrupted. The browser is attempting to reconnect automatically.'}}`,
+`function connectEvents(){if(events)events.close();if(!session)return;events=new EventSource(endpoint(\`/api/events?room=${'${encodeURIComponent(session.room)}'}&token=${'${encodeURIComponent(session.token)}'}\`));events.addEventListener('state',e=>{const next=JSON.parse(e.data);if(Number.isFinite(Number(next.serverTime)))serverClockOffset=Number(next.serverTime)-Date.now();handleStateSounds(next);prepareTableMotion(next);state=next;$('connectionLabel').textContent='Connected';setServerStatus('Connected to multiplayer server',true);render();requestAnimationFrame(applyTableMotion)});events.onerror=()=>{const label=$('connectionLabel'),tip=$('connectionTip');if(label)label.textContent='Reconnecting…';if(tip)tip.textContent='Connection interrupted. The browser is attempting to reconnect automatically.'}}`,
+    'state-driven card and action animation'
+  );
+
+  return source;
+}
+
 function patchMultiplayerHtml(source) {
-  if (source.includes(CLIENT_MARKER)) return patchProfessionalTableClient(patchAllInShowdownClient(patchBustTopUpClient(source)));
+  if (source.includes(CLIENT_MARKER)) return patchPremiumTablePresentationClient(patchProfessionalTableClient(patchAllInShowdownClient(patchBustTopUpClient(source))));
 
   source = replaceOnce(
     source,
@@ -749,7 +823,7 @@ let clientTimeoutActionKey = '';`,
     'explicit check versus call action'
   );
 
-  return patchProfessionalTableClient(patchAllInShowdownClient(patchBustTopUpClient(source)));
+  return patchPremiumTablePresentationClient(patchProfessionalTableClient(patchAllInShowdownClient(patchBustTopUpClient(source))));
 }
 
 function patchIndex(source) {
