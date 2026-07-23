@@ -1434,8 +1434,75 @@ function patchSoloNoOverlapCleanup(source) {
   return replaceOnce(source, '</head>', css + '\n</head>', 'solo no-overlap cleanup styles');
 }
 
+
+function patchFinalActionPotPolishClient(source) {
+  if (source.includes('SIVEL_FINAL_ACTION_POT_POLISH')) return source;
+
+  source = replaceOnce(
+    source,
+    `<div class="status" id="gameStatus">Waiting for the table.</div><div class="result hidden" id="resultBox"><strong id="resultTitle"></strong><span id="resultDetail"></span></div>`,
+    `<div class="status sivel-table-status-spacer" aria-hidden="true">Waiting for the table.</div><div class="result hidden" id="resultBox"><strong id="resultTitle"></strong><span id="resultDetail"></span></div>`,
+    'preserve table center geometry while moving action status'
+  );
+  source = replaceOnce(
+    source,
+    `<section class="controls"><div class="action-row">`,
+    `<section class="controls"><div class="status sivel-controls-status" id="gameStatus">Waiting for the table.</div><div class="action-row">`,
+    'move action status into controls panel'
+  );
+
+  const css = `<style id="sivel-final-action-pot-polish">
+/* SIVEL_FINAL_ACTION_POT_POLISH — action messaging lives off the felt; pot stays centered below the table mark. */
+.center .pot{
+  left:0!important;right:auto!important;margin-left:auto!important;margin-right:auto!important;
+  transform:translateY(216px) scale(.78)!important;transform-origin:center!important
+}
+.controls>.sivel-controls-status{
+  position:relative!important;left:auto!important;right:auto!important;top:auto!important;bottom:auto!important;
+  transform:none!important;display:flex!important;align-items:center!important;justify-content:center!important;
+  width:100%!important;max-width:none!important;min-width:0!important;min-height:31px!important;
+  margin:0 0 10px!important;padding:6px 12px!important;box-sizing:border-box!important;
+  border-radius:10px!important;background:linear-gradient(180deg,rgba(9,20,30,.98),rgba(5,12,19,.98))!important;
+  border:1px solid rgba(83,118,146,.42)!important;box-shadow:inset 0 1px 0 rgba(255,255,255,.05)!important;
+  color:#b9c9d6!important;font-size:10px!important;font-weight:850!important;letter-spacing:.035em!important;
+  line-height:1.25!important;text-align:center!important;z-index:2!important;pointer-events:none!important
+}
+.controls>.sivel-controls-status.sivel-result-placeholder{visibility:hidden!important}
+.center>.sivel-table-status-spacer{visibility:hidden!important;pointer-events:none!important}
+.seat:not(.self-seat):not(.open-seat) .seat-name>span:not(.seat-status-tag){font-size:10px!important;font-weight:950!important;padding:2px 7px 2px 4px!important}
+.seat:not(.self-seat):not(.open-seat) .seat-name>span:not(.seat-status-tag)::before{width:11px!important;height:11px!important;flex-basis:11px!important}
+@media(max-width:760px){
+  .center .pot{transform:translateY(198px) scale(.8)!important}
+  .controls>.sivel-controls-status{min-height:29px!important;margin-bottom:8px!important;padding:5px 9px!important;font-size:9px!important}
+  .seat:not(.self-seat):not(.open-seat) .seat-name>span:not(.seat-status-tag){font-size:9px!important;padding:1px 6px 1px 3px!important}
+}
+</style>`;
+  source = replaceOnce(source, '</head>', css + '\n</head>', 'final action, pot, and profile polish styles');
+
+  const runtime = `
+/* SIVEL_FINAL_ACTION_POT_POLISH runtime */
+sivelPlaceSafeActionLane=function(){
+  const status=document.getElementById('gameStatus');if(!status)return;
+  status.classList.remove('sivel-safe-action-lane');
+  status.style.removeProperty('--sivel-action-scale');status.style.removeProperty('--sivel-action-shift');
+};
+`;
+  return replaceOnce(source, 'async function api(path,body={}){', runtime + '\nasync function api(path,body={}){', 'disable felt action-lane positioning');
+}
+
+function patchSoloFinalChipCountPolish(source) {
+  if (source.includes('SIVEL_SOLO_FINAL_CHIP_COUNT_POLISH')) return source;
+  const css = `<style id="sivel-solo-final-chip-count-polish">
+/* SIVEL_SOLO_FINAL_CHIP_COUNT_POLISH — slightly stronger stack readability inside the approved identity header. */
+#gameScreen .seat:not(.self-seat) .seat-name>span{font-size:10px!important;font-weight:950!important}
+#gameScreen .seat:not(.self-seat) .seat-name>span::before{width:11px!important;height:11px!important;flex-basis:11px!important}
+@media(max-width:860px){#gameScreen .seat:not(.self-seat) .seat-name>span{font-size:9px!important}}
+</style>`;
+  return replaceOnce(source, '</head>', css + '\n</head>', 'solo chip-count readability polish');
+}
+
 function patchMultiplayerHtml(source) {
-  if (source.includes(CLIENT_MARKER)) return patchProfessionalNoOverlapCleanupClient(patchOpponentIdentityProfileClient(patchOrganizedPotOpponentStacksClient(patchProfessionalPotSeatLayoutClient(patchGameplayVisualFixesClient(patchPremiumTablePresentationClient(patchProfessionalTableClient(patchAllInShowdownClient(patchBustTopUpClient(source)))))))));
+  if (source.includes(CLIENT_MARKER)) return patchFinalActionPotPolishClient(patchProfessionalNoOverlapCleanupClient(patchOpponentIdentityProfileClient(patchOrganizedPotOpponentStacksClient(patchProfessionalPotSeatLayoutClient(patchGameplayVisualFixesClient(patchPremiumTablePresentationClient(patchProfessionalTableClient(patchAllInShowdownClient(patchBustTopUpClient(source))))))))));
 
   source = replaceOnce(
     source,
@@ -1526,11 +1593,11 @@ let clientTimeoutActionKey = '';`,
     'explicit check versus call action'
   );
 
-  return patchProfessionalNoOverlapCleanupClient(patchOpponentIdentityProfileClient(patchOrganizedPotOpponentStacksClient(patchProfessionalPotSeatLayoutClient(patchGameplayVisualFixesClient(patchPremiumTablePresentationClient(patchProfessionalTableClient(patchAllInShowdownClient(patchBustTopUpClient(source)))))))));
+  return patchFinalActionPotPolishClient(patchProfessionalNoOverlapCleanupClient(patchOpponentIdentityProfileClient(patchOrganizedPotOpponentStacksClient(patchProfessionalPotSeatLayoutClient(patchGameplayVisualFixesClient(patchPremiumTablePresentationClient(patchProfessionalTableClient(patchAllInShowdownClient(patchBustTopUpClient(source))))))))));
 }
 
 function patchIndex(source) {
-  source = patchPublicProfileViewerAndSettings(patchSoloNoOverlapCleanup(patchSoloOpponentIdentityLayout(patchSoloOrganizedPotOpponentStacks(patchSoloProfessionalPotSeatLayout(patchSoloGameplayVisualFixes(patchSoloTablePresentation(source)))))));
+  source = patchPublicProfileViewerAndSettings(patchSoloFinalChipCountPolish(patchSoloNoOverlapCleanup(patchSoloOpponentIdentityLayout(patchSoloOrganizedPotOpponentStacks(patchSoloProfessionalPotSeatLayout(patchSoloGameplayVisualFixes(patchSoloTablePresentation(source))))))));
   const match = source.match(/const encoded='([A-Za-z0-9+/=]+)';/);
   if (!match) throw new Error('V55 patch could not locate the embedded multiplayer client.');
   const multiplayer = Buffer.from(match[1], 'base64').toString('utf8');
@@ -1578,4 +1645,4 @@ if (require.main === module) {
   catch (err) { console.error(`Sivel Poker V55 patch failed: ${err.message}`); process.exit(1); }
 }
 
-module.exports = { patchServer, patchSoloTablePresentation, patchSoloGameplayVisualFixes, patchSoloProfessionalPotSeatLayout, patchSoloOrganizedPotOpponentStacks, patchSoloOpponentIdentityLayout, patchSoloNoOverlapCleanup, patchPublicProfileViewerAndSettings, patchProfessionalPotSeatLayoutClient, patchOrganizedPotOpponentStacksClient, patchOpponentIdentityProfileClient, patchProfessionalNoOverlapCleanupClient, patchMultiplayerHtml, patchIndex };
+module.exports = { patchServer, patchSoloTablePresentation, patchSoloGameplayVisualFixes, patchSoloProfessionalPotSeatLayout, patchSoloOrganizedPotOpponentStacks, patchSoloOpponentIdentityLayout, patchSoloNoOverlapCleanup, patchSoloFinalChipCountPolish, patchPublicProfileViewerAndSettings, patchProfessionalPotSeatLayoutClient, patchOrganizedPotOpponentStacksClient, patchOpponentIdentityProfileClient, patchProfessionalNoOverlapCleanupClient, patchFinalActionPotPolishClient, patchMultiplayerHtml, patchIndex };
