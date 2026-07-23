@@ -1344,8 +1344,98 @@ document.getElementById('publicPlayerProfileClose').onclick=close;overlay.addEve
   return replaceOnce(source, '</body>', runtime + '\n</body>', 'public profile viewer runtime');
 }
 
+
+function patchProfessionalNoOverlapCleanupClient(source) {
+  if (source.includes('SIVEL_PROFESSIONAL_NO_OVERLAP_CLEANUP')) return source;
+
+  const css = `<style id="sivel-professional-no-overlap-cleanup">
+/* SIVEL_PROFESSIONAL_NO_OVERLAP_CLEANUP — one identity panel per opponent and a collision-safe action lane. */
+#seats .seat:not(.self-seat):has(> .seat-core.sivel-profile-trigger) > .seat-core:not(.sivel-profile-trigger){display:none!important}
+#seats .seat:not(.self-seat) > .seat-core.sivel-profile-trigger{visibility:visible!important}
+#gameScreen.sivel-public-live .side-panel>h3:first-child,#gameScreen.sivel-public-live #gamePlayers{display:none!important}
+#gameScreen.sivel-public-live #gamePlayers+h3{margin-top:0!important}
+.center #gameStatus.sivel-safe-action-lane{
+  position:relative!important;left:auto!important;right:auto!important;top:auto!important;bottom:auto!important;
+  transform:translateY(var(--sivel-action-shift,42px)) scale(var(--sivel-action-scale,.72))!important;transform-origin:center!important;
+  margin-left:auto!important;margin-right:auto!important;z-index:18!important;pointer-events:none!important
+}
+@media(max-width:760px){
+  .center #gameStatus.sivel-safe-action-lane{--sivel-action-shift:48px}
+}
+</style>`;
+  source = replaceOnce(source, '</head>', css + '\n</head>', 'professional no-overlap cleanup styles');
+
+  const runtime = `
+/* SIVEL_PROFESSIONAL_NO_OVERLAP_CLEANUP runtime */
+function sivelRemoveDuplicateOpponentProfiles(){
+  document.querySelectorAll('#seats .seat:not(.self-seat)').forEach(function(seat){
+    const direct=Array.from(seat.children).filter(function(node){return node.classList&&node.classList.contains('seat-core')});
+    const preferred=direct.find(function(node){return node.classList.contains('sivel-profile-trigger')});
+    if(!preferred)return;
+    direct.forEach(function(node){if(node!==preferred)node.remove()});
+  });
+}
+function sivelPlaceSafeActionLane(){
+  const status=document.getElementById('gameStatus'),result=document.getElementById('resultBox');
+  const selfCards=document.querySelector('#seats .seat.self-seat .seat-cards');
+  const pot=document.querySelector('#tableStage .center .pot');
+  if(!status||!selfCards||!pot){if(status)status.classList.remove('sivel-safe-action-lane');return}
+  if(result&&!result.classList.contains('hidden')){status.classList.remove('sivel-safe-action-lane');return}
+  const cardsRect=selfCards.getBoundingClientRect(),potRect=pot.getBoundingClientRect();
+  if(!cardsRect.width||!cardsRect.height||!potRect.width||!potRect.height)return;
+  const mobile=window.matchMedia&&window.matchMedia('(max-width:760px)').matches;
+  const baseline=mobile?48:42;
+  status.classList.add('sivel-safe-action-lane');
+  status.style.setProperty('--sivel-action-scale','.72');
+  status.style.setProperty('--sivel-action-shift',baseline+'px');
+  let rect=status.getBoundingClientRect();
+  const topLimit=potRect.bottom+7,bottomLimit=cardsRect.top-8;
+  const available=Math.max(0,bottomLimit-topLimit);
+  if(available<rect.height){
+    const scale=Math.max(.56,Math.min(.72,.72*(available/Math.max(1,rect.height))));
+    status.style.setProperty('--sivel-action-scale',String(scale));
+    rect=status.getBoundingClientRect();
+  }
+  let targetTop;
+  if(bottomLimit-topLimit>=rect.height)targetTop=topLimit+(bottomLimit-topLimit-rect.height)/2;
+  else targetTop=bottomLimit-rect.height;
+  const delta=targetTop-rect.top;
+  status.style.setProperty('--sivel-action-shift',(baseline+delta)+'px');
+}
+function sivelFinalizeProfessionalTableLayout(){
+  const gameScreen=document.getElementById('gameScreen');
+  if(gameScreen)gameScreen.classList.toggle('sivel-public-live',!!(state&&state.isPublic&&state.stage==='playing'));
+  sivelRemoveDuplicateOpponentProfiles();
+  sivelPlaceSafeActionLane();
+}
+const sivelNoOverlapBaseRenderGame=renderGame;
+renderGame=function(){const value=sivelNoOverlapBaseRenderGame.apply(this,arguments);requestAnimationFrame(function(){requestAnimationFrame(sivelFinalizeProfessionalTableLayout)});return value};
+const sivelNoOverlapBaseWaiting=renderPublicWaitingTable;
+renderPublicWaitingTable=function(){const gameScreen=document.getElementById('gameScreen');if(gameScreen)gameScreen.classList.remove('sivel-public-live');const value=sivelNoOverlapBaseWaiting.apply(this,arguments);requestAnimationFrame(sivelRemoveDuplicateOpponentProfiles);return value};
+window.addEventListener('resize',function(){requestAnimationFrame(sivelPlaceSafeActionLane)});
+`;
+  return replaceOnce(source, 'async function api(path,body={}){', runtime + '\nasync function api(path,body={}){', 'professional no-overlap cleanup runtime');
+}
+
+function patchSoloNoOverlapCleanup(source) {
+  if (source.includes('SIVEL_SOLO_NO_OVERLAP_CLEANUP')) return source;
+
+  const css = `<style id="sivel-solo-no-overlap-cleanup">
+/* SIVEL_SOLO_NO_OVERLAP_CLEANUP — removes every legacy stack plate while preserving the clean identity header. */
+#gameScreen .seat:not(.self-seat)[data-stack]::before,
+#gameScreen .seat:not(.self-seat)[data-stack]::after,
+#gameScreen .seat:not(.self-seat)::before,
+#gameScreen .seat:not(.self-seat)::after{display:none!important;content:none!important;background:none!important;border:0!important;box-shadow:none!important}
+#gameScreen .seat:not(.self-seat) .seat-name>span{
+  background:transparent!important;border:0!important;box-shadow:none!important;padding:0!important;margin-top:2px!important
+}
+#gameScreen .seat:not(.self-seat) .seat-name>span::before{box-shadow:inset 0 0 0 2px #8b5717!important}
+</style>`;
+  return replaceOnce(source, '</head>', css + '\n</head>', 'solo no-overlap cleanup styles');
+}
+
 function patchMultiplayerHtml(source) {
-  if (source.includes(CLIENT_MARKER)) return patchOpponentIdentityProfileClient(patchOrganizedPotOpponentStacksClient(patchProfessionalPotSeatLayoutClient(patchGameplayVisualFixesClient(patchPremiumTablePresentationClient(patchProfessionalTableClient(patchAllInShowdownClient(patchBustTopUpClient(source))))))));
+  if (source.includes(CLIENT_MARKER)) return patchProfessionalNoOverlapCleanupClient(patchOpponentIdentityProfileClient(patchOrganizedPotOpponentStacksClient(patchProfessionalPotSeatLayoutClient(patchGameplayVisualFixesClient(patchPremiumTablePresentationClient(patchProfessionalTableClient(patchAllInShowdownClient(patchBustTopUpClient(source)))))))));
 
   source = replaceOnce(
     source,
@@ -1436,11 +1526,11 @@ let clientTimeoutActionKey = '';`,
     'explicit check versus call action'
   );
 
-  return patchOpponentIdentityProfileClient(patchOrganizedPotOpponentStacksClient(patchProfessionalPotSeatLayoutClient(patchGameplayVisualFixesClient(patchPremiumTablePresentationClient(patchProfessionalTableClient(patchAllInShowdownClient(patchBustTopUpClient(source))))))));
+  return patchProfessionalNoOverlapCleanupClient(patchOpponentIdentityProfileClient(patchOrganizedPotOpponentStacksClient(patchProfessionalPotSeatLayoutClient(patchGameplayVisualFixesClient(patchPremiumTablePresentationClient(patchProfessionalTableClient(patchAllInShowdownClient(patchBustTopUpClient(source)))))))));
 }
 
 function patchIndex(source) {
-  source = patchPublicProfileViewerAndSettings(patchSoloOpponentIdentityLayout(patchSoloOrganizedPotOpponentStacks(patchSoloProfessionalPotSeatLayout(patchSoloGameplayVisualFixes(patchSoloTablePresentation(source))))));
+  source = patchPublicProfileViewerAndSettings(patchSoloNoOverlapCleanup(patchSoloOpponentIdentityLayout(patchSoloOrganizedPotOpponentStacks(patchSoloProfessionalPotSeatLayout(patchSoloGameplayVisualFixes(patchSoloTablePresentation(source)))))));
   const match = source.match(/const encoded='([A-Za-z0-9+/=]+)';/);
   if (!match) throw new Error('V55 patch could not locate the embedded multiplayer client.');
   const multiplayer = Buffer.from(match[1], 'base64').toString('utf8');
@@ -1488,4 +1578,4 @@ if (require.main === module) {
   catch (err) { console.error(`Sivel Poker V55 patch failed: ${err.message}`); process.exit(1); }
 }
 
-module.exports = { patchServer, patchSoloTablePresentation, patchSoloGameplayVisualFixes, patchSoloProfessionalPotSeatLayout, patchSoloOrganizedPotOpponentStacks, patchSoloOpponentIdentityLayout, patchPublicProfileViewerAndSettings, patchProfessionalPotSeatLayoutClient, patchOrganizedPotOpponentStacksClient, patchOpponentIdentityProfileClient, patchMultiplayerHtml, patchIndex };
+module.exports = { patchServer, patchSoloTablePresentation, patchSoloGameplayVisualFixes, patchSoloProfessionalPotSeatLayout, patchSoloOrganizedPotOpponentStacks, patchSoloOpponentIdentityLayout, patchSoloNoOverlapCleanup, patchPublicProfileViewerAndSettings, patchProfessionalPotSeatLayoutClient, patchOrganizedPotOpponentStacksClient, patchOpponentIdentityProfileClient, patchProfessionalNoOverlapCleanupClient, patchMultiplayerHtml, patchIndex };
