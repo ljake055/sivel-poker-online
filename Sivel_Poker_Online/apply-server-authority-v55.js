@@ -1527,8 +1527,99 @@ renderPublicWaitingTable=function(){sivelSyncPublicBottomProfileCleanup();return
   return replaceOnce(source, 'async function api(path,body={}){', runtime + '\nasync function api(path,body={}){', 'bottom public profile removal runtime');
 }
 
+
+function patchPublicSelfIdentityFinalClient(source) {
+  if (source.includes('SIVEL_PUBLIC_SELF_IDENTITY_FINAL')) return source;
+
+  const css = `<style id="sivel-public-self-identity-final">
+/* SIVEL_PUBLIC_SELF_IDENTITY_FINAL — the public-table hero seat uses cards only; the redundant lower identity never renders. */
+#gameScreen.sivel-public-table-profile-cleanup #seats .seat.self-seat > .seat-core,
+#gameScreen #seats .seat.self-seat[data-sivel-public-self="1"] > .seat-core{
+  visibility:hidden!important;opacity:0!important;pointer-events:none!important
+}
+</style>`;
+  source = replaceOnce(source, '</head>', css + '\n</head>', 'final public self-identity removal styles');
+
+  source = replaceOnce(
+    source,
+    `record.root.className=sivelStableSeatClass(p,originalIndex,slot,g,showdownRevealed);`,
+    `record.root.className=sivelStableSeatClass(p,originalIndex,slot,g,showdownRevealed);sivelEnforcePublicSelfIdentity(record.root,p);`,
+    'synchronous public self-identity removal'
+  );
+
+  const runtime = `
+/* SIVEL_PUBLIC_SELF_IDENTITY_FINAL runtime */
+function sivelEnforcePublicSelfIdentity(root,player){
+  if(!root)return;
+  const hide=!!(state&&state.isPublic&&player&&player.isSelf);
+  root.dataset.sivelPublicSelf=hide?'1':'0';
+  const cores=Array.from(root.children||[]).filter(function(node){return node.classList&&node.classList.contains('seat-core')});
+  const core=cores.shift();cores.forEach(function(extra){extra.remove()});
+  if(!core)return;
+  if(hide){
+    core.dataset.sivelPublicIdentityHidden='1';core.removeAttribute('hidden');core.setAttribute('aria-hidden','true');
+    core.style.removeProperty('display');core.style.setProperty('visibility','hidden','important');core.style.setProperty('opacity','0','important');
+  }else if(core.dataset.sivelPublicIdentityHidden==='1'){
+    delete core.dataset.sivelPublicIdentityHidden;core.removeAttribute('hidden');core.removeAttribute('aria-hidden');
+    core.style.removeProperty('visibility');core.style.removeProperty('opacity');
+  }
+}
+function sivelEnforceEveryPublicSelfIdentity(){
+  if(!(state&&state.isPublic))return;
+  document.querySelectorAll('#seats .seat.self-seat').forEach(function(seat){
+    const index=Number(seat.dataset.playerIndex),player=state.players&&state.players[index];
+    sivelEnforcePublicSelfIdentity(seat,player||{isSelf:true});
+  });
+}
+const sivelPublicSelfSeatHost=document.getElementById('seats');
+if(sivelPublicSelfSeatHost&&window.MutationObserver){
+  new MutationObserver(function(){sivelEnforceEveryPublicSelfIdentity()}).observe(sivelPublicSelfSeatHost,{childList:true,subtree:true});
+}
+`;
+  return replaceOnce(source, 'async function api(path,body={}){', runtime + '\nasync function api(path,body={}){', 'final public self-identity runtime');
+}
+
+function patchSoloPublicParityFinal(source) {
+  if (source.includes('SIVEL_SOLO_PUBLIC_PARITY_FINAL')) return source;
+
+  const css = `<style id="sivel-solo-public-parity-final">
+/* SIVEL_SOLO_PUBLIC_PARITY_FINAL — preserve the approved solo layout while restoring readable stacks inside every identity header. */
+#gameScreen .seat:not(.self-seat)[data-stack] .seat-core .seat-name > span,
+#gameScreen .seat:not(.self-seat) .seat-core .seat-name > span,
+#gameScreen .seat.self-seat .seat-core .seat-name > span{
+  display:inline-flex!important;visibility:visible!important;opacity:1!important;align-items:center!important;gap:5px!important;
+  width:max-content!important;max-width:100%!important;margin-top:2px!important;padding:0!important;border:0!important;border-radius:0!important;
+  background:transparent!important;box-shadow:none!important;color:#f2d98f!important;font-size:10px!important;font-weight:950!important;
+  line-height:1.2!important;letter-spacing:.02em!important;font-variant-numeric:tabular-nums!important
+}
+#gameScreen .seat:not(.self-seat)[data-stack] .seat-core .seat-name > span::before,
+#gameScreen .seat:not(.self-seat) .seat-core .seat-name > span::before,
+#gameScreen .seat.self-seat .seat-core .seat-name > span::before{
+  content:''!important;display:block!important;width:11px!important;height:11px!important;flex:0 0 11px!important;border-radius:50%!important;
+  background:repeating-conic-gradient(from 0deg,#f0cf76 0 12deg,#7e4d13 12deg 24deg)!important;
+  border:1px solid #f5df9c!important;box-shadow:inset 0 0 0 2px #8b5717!important
+}
+#gameScreen .seat:not(.self-seat)[data-stack]::before,
+#gameScreen .seat:not(.self-seat)[data-stack]::after,
+#gameScreen .seat:not(.self-seat)::before,
+#gameScreen .seat:not(.self-seat)::after{
+  display:none!important;content:none!important;background:none!important;border:0!important;box-shadow:none!important
+}
+#gameScreen .position-badges{background:transparent!important;border:0!important;box-shadow:none!important}
+@media(max-width:860px){
+  #gameScreen .seat:not(.self-seat)[data-stack] .seat-core .seat-name > span,
+  #gameScreen .seat:not(.self-seat) .seat-core .seat-name > span,
+  #gameScreen .seat.self-seat .seat-core .seat-name > span{font-size:9px!important;gap:4px!important}
+  #gameScreen .seat:not(.self-seat)[data-stack] .seat-core .seat-name > span::before,
+  #gameScreen .seat:not(.self-seat) .seat-core .seat-name > span::before,
+  #gameScreen .seat.self-seat .seat-core .seat-name > span::before{width:10px!important;height:10px!important;flex-basis:10px!important}
+}
+</style>`;
+  return replaceOnce(source, '</head>', css + '\n</head>', 'final solo public-table parity styles');
+}
+
 function patchMultiplayerHtml(source) {
-  if (source.includes(CLIENT_MARKER)) return patchRemoveBottomPublicProfileClient(patchFinalActionPotPolishClient(patchProfessionalNoOverlapCleanupClient(patchOpponentIdentityProfileClient(patchOrganizedPotOpponentStacksClient(patchProfessionalPotSeatLayoutClient(patchGameplayVisualFixesClient(patchPremiumTablePresentationClient(patchProfessionalTableClient(patchAllInShowdownClient(patchBustTopUpClient(source)))))))))));
+  if (source.includes(CLIENT_MARKER)) return patchPublicSelfIdentityFinalClient(patchRemoveBottomPublicProfileClient(patchFinalActionPotPolishClient(patchProfessionalNoOverlapCleanupClient(patchOpponentIdentityProfileClient(patchOrganizedPotOpponentStacksClient(patchProfessionalPotSeatLayoutClient(patchGameplayVisualFixesClient(patchPremiumTablePresentationClient(patchProfessionalTableClient(patchAllInShowdownClient(patchBustTopUpClient(source))))))))))));
 
   source = replaceOnce(
     source,
@@ -1619,11 +1710,11 @@ let clientTimeoutActionKey = '';`,
     'explicit check versus call action'
   );
 
-  return patchRemoveBottomPublicProfileClient(patchFinalActionPotPolishClient(patchProfessionalNoOverlapCleanupClient(patchOpponentIdentityProfileClient(patchOrganizedPotOpponentStacksClient(patchProfessionalPotSeatLayoutClient(patchGameplayVisualFixesClient(patchPremiumTablePresentationClient(patchProfessionalTableClient(patchAllInShowdownClient(patchBustTopUpClient(source)))))))))));
+  return patchPublicSelfIdentityFinalClient(patchRemoveBottomPublicProfileClient(patchFinalActionPotPolishClient(patchProfessionalNoOverlapCleanupClient(patchOpponentIdentityProfileClient(patchOrganizedPotOpponentStacksClient(patchProfessionalPotSeatLayoutClient(patchGameplayVisualFixesClient(patchPremiumTablePresentationClient(patchProfessionalTableClient(patchAllInShowdownClient(patchBustTopUpClient(source))))))))))));
 }
 
 function patchIndex(source) {
-  source = patchPublicProfileViewerAndSettings(patchSoloFinalChipCountPolish(patchSoloNoOverlapCleanup(patchSoloOpponentIdentityLayout(patchSoloOrganizedPotOpponentStacks(patchSoloProfessionalPotSeatLayout(patchSoloGameplayVisualFixes(patchSoloTablePresentation(source))))))));
+  source = patchSoloPublicParityFinal(patchPublicProfileViewerAndSettings(patchSoloFinalChipCountPolish(patchSoloNoOverlapCleanup(patchSoloOpponentIdentityLayout(patchSoloOrganizedPotOpponentStacks(patchSoloProfessionalPotSeatLayout(patchSoloGameplayVisualFixes(patchSoloTablePresentation(source)))))))));
   const match = source.match(/const encoded='([A-Za-z0-9+/=]+)';/);
   if (!match) throw new Error('V55 patch could not locate the embedded multiplayer client.');
   const multiplayer = Buffer.from(match[1], 'base64').toString('utf8');
@@ -1671,4 +1762,4 @@ if (require.main === module) {
   catch (err) { console.error(`Sivel Poker V55 patch failed: ${err.message}`); process.exit(1); }
 }
 
-module.exports = { patchServer, patchSoloTablePresentation, patchSoloGameplayVisualFixes, patchSoloProfessionalPotSeatLayout, patchSoloOrganizedPotOpponentStacks, patchSoloOpponentIdentityLayout, patchSoloNoOverlapCleanup, patchSoloFinalChipCountPolish, patchPublicProfileViewerAndSettings, patchProfessionalPotSeatLayoutClient, patchOrganizedPotOpponentStacksClient, patchOpponentIdentityProfileClient, patchProfessionalNoOverlapCleanupClient, patchFinalActionPotPolishClient, patchRemoveBottomPublicProfileClient, patchMultiplayerHtml, patchIndex };
+module.exports = { patchServer, patchSoloTablePresentation, patchSoloGameplayVisualFixes, patchSoloProfessionalPotSeatLayout, patchSoloOrganizedPotOpponentStacks, patchSoloOpponentIdentityLayout, patchSoloNoOverlapCleanup, patchSoloFinalChipCountPolish, patchPublicProfileViewerAndSettings, patchProfessionalPotSeatLayoutClient, patchOrganizedPotOpponentStacksClient, patchOpponentIdentityProfileClient, patchProfessionalNoOverlapCleanupClient, patchFinalActionPotPolishClient, patchRemoveBottomPublicProfileClient, patchPublicSelfIdentityFinalClient, patchSoloPublicParityFinal, patchMultiplayerHtml, patchIndex };
