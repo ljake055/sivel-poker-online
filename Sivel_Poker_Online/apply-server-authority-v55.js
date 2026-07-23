@@ -1618,8 +1618,89 @@ function patchSoloPublicParityFinal(source) {
   return replaceOnce(source, '</head>', css + '\n</head>', 'final solo public-table parity styles');
 }
 
+
+function patchPublicGhostSeatRemovalClient(source) {
+  if (source.includes('SIVEL_PUBLIC_GHOST_SEAT_REMOVAL')) return source;
+
+  source = replaceOnce(
+    source,
+    `record.root.className=sivelStableSeatClass(p,originalIndex,slot,g,showdownRevealed);sivelEnforcePublicSelfIdentity(record.root,p);`,
+    `record.root.className=sivelStableSeatClass(p,originalIndex,slot,g,showdownRevealed);sivelEnforcePublicSelfIdentity(record.root,p);sivelFinalizePublicSeatNode(record.root,p);`,
+    'synchronous public ghost-seat removal'
+  );
+
+  const css = `<style id="sivel-public-ghost-seat-removal">
+/* SIVEL_PUBLIC_GHOST_SEAT_REMOVAL — remove stale zero-chip public seats and the redundant local identity, without moving anything else. */
+#gameScreen #seats .seat.sivel-public-ghost-seat{display:none!important}
+#gameScreen #seats .seat.self-seat > .seat-core{display:none!important}
+</style>`;
+  source = replaceOnce(source, '</head>', css + '\n</head>', 'public ghost-seat removal styles');
+
+  const runtime = `
+/* SIVEL_PUBLIC_GHOST_SEAT_REMOVAL runtime */
+function sivelPublicSeatIsGhost(player){
+  if(!(state&&state.isPublic)||!player)return false;
+  const chips=Math.max(0,Number(player.chips)||0);
+  const hasHole=Array.isArray(player.hole)&&player.hole.some(function(card){return !!card});
+  return !!player.cashedOut||(chips<=0&&!player.inHand&&!hasHole);
+}
+function sivelFinalizePublicSeatNode(root,player){
+  if(!root)return;
+  const self=!!(state&&state.isPublic&&player&&player.isSelf);
+  const ghost=sivelPublicSeatIsGhost(player);
+  root.classList.toggle('sivel-public-ghost-seat',ghost);
+  if(ghost){root.setAttribute('hidden','');root.setAttribute('aria-hidden','true')}
+  else{root.removeAttribute('hidden');root.removeAttribute('aria-hidden')}
+  if(self){
+    Array.from(root.children||[]).forEach(function(node){
+      if(node.classList&&node.classList.contains('seat-core'))node.remove();
+    });
+  }
+}
+function sivelScrubEveryPublicSeat(){
+  if(!(state&&state.isPublic))return;
+  const direct=Array.from(document.querySelectorAll('#seats > .seat'));
+  let assignments=[];
+  try{assignments=typeof visualSeatAssignments==='function'?visualSeatAssignments(state.players||[],(state.players||[]).length):[]}
+  catch(_err){assignments=[]}
+  direct.forEach(function(seat,order){
+    const index=seat.dataset.playerIndex==null?NaN:Number(seat.dataset.playerIndex);
+    const player=Number.isFinite(index)?state.players&&state.players[index]:(assignments[order]&&assignments[order].p)||state.players&&state.players[order];
+    if(player)sivelFinalizePublicSeatNode(seat,player);
+  });
+}
+const sivelGhostSeatBaseRenderGame=renderGame;
+renderGame=function(){const value=sivelGhostSeatBaseRenderGame.apply(this,arguments);sivelScrubEveryPublicSeat();return value};
+const sivelGhostSeatBaseWaiting=renderPublicWaitingTable;
+renderPublicWaitingTable=function(){const value=sivelGhostSeatBaseWaiting.apply(this,arguments);sivelScrubEveryPublicSeat();return value};
+const sivelGhostSeatHost=document.getElementById('seats');
+if(sivelGhostSeatHost&&window.MutationObserver){
+  new MutationObserver(function(){sivelScrubEveryPublicSeat()}).observe(sivelGhostSeatHost,{childList:true,subtree:true});
+}
+`;
+  return replaceOnce(source, 'async function api(path,body={}){', runtime + '\nasync function api(path,body={}){', 'public ghost-seat removal runtime');
+}
+
+function patchSoloTransparentBetDisplay(source) {
+  if (source.includes('SIVEL_SOLO_TRANSPARENT_BET_DISPLAY')) return source;
+  const css = `<style id="sivel-solo-transparent-bet-display">
+/* SIVEL_SOLO_TRANSPARENT_BET_DISPLAY — keep blind/bet chips and values, remove the opaque rectangular plate. */
+#gameScreen .bet-badge,
+#gameScreen .bet-badge .chip-bet-wrap{
+  background:transparent!important;border:0!important;box-shadow:none!important;
+  backdrop-filter:none!important;-webkit-backdrop-filter:none!important;filter:none!important
+}
+#gameScreen .bet-badge .chip-bet-wrap{padding:0!important;border-radius:0!important}
+#gameScreen .bet-badge .chip-bet-wrap strong,
+#gameScreen .bet-badge > strong{
+  background:transparent!important;border:0!important;box-shadow:none!important;padding:0!important
+}
+</style>`;
+  return replaceOnce(source, '</head>', css + '\n</head>', 'solo transparent bet display styles');
+}
+
 function patchMultiplayerHtml(source) {
-  if (source.includes(CLIENT_MARKER)) return patchPublicSelfIdentityFinalClient(patchRemoveBottomPublicProfileClient(patchFinalActionPotPolishClient(patchProfessionalNoOverlapCleanupClient(patchOpponentIdentityProfileClient(patchOrganizedPotOpponentStacksClient(patchProfessionalPotSeatLayoutClient(patchGameplayVisualFixesClient(patchPremiumTablePresentationClient(patchProfessionalTableClient(patchAllInShowdownClient(patchBustTopUpClient(source))))))))))));
+  if (source.includes(CLIENT_MARKER)) return patchPublicGhostSeatRemovalClient(patchPublicSelfIdentityFinalClient(patchRemoveBottomPublicProfileClient(patchFinalActionPotPolishClient(patchProfessionalNoOverlapCleanupClient(patchOpponentIdentityProfileClient(patchOrganizedPotOpponentStacksClient(patchProfessionalPotSeatLayoutClient(patchGameplayVisualFixesClient(patchPremiumTablePresentationClient(patchProfessionalTableClient(patchAllInShowdownClient(patchBustTopUpClient(source)))))))))))));
 
   source = replaceOnce(
     source,
@@ -1710,11 +1791,11 @@ let clientTimeoutActionKey = '';`,
     'explicit check versus call action'
   );
 
-  return patchPublicSelfIdentityFinalClient(patchRemoveBottomPublicProfileClient(patchFinalActionPotPolishClient(patchProfessionalNoOverlapCleanupClient(patchOpponentIdentityProfileClient(patchOrganizedPotOpponentStacksClient(patchProfessionalPotSeatLayoutClient(patchGameplayVisualFixesClient(patchPremiumTablePresentationClient(patchProfessionalTableClient(patchAllInShowdownClient(patchBustTopUpClient(source))))))))))));
+  return patchPublicGhostSeatRemovalClient(patchPublicSelfIdentityFinalClient(patchRemoveBottomPublicProfileClient(patchFinalActionPotPolishClient(patchProfessionalNoOverlapCleanupClient(patchOpponentIdentityProfileClient(patchOrganizedPotOpponentStacksClient(patchProfessionalPotSeatLayoutClient(patchGameplayVisualFixesClient(patchPremiumTablePresentationClient(patchProfessionalTableClient(patchAllInShowdownClient(patchBustTopUpClient(source)))))))))))));
 }
 
 function patchIndex(source) {
-  source = patchSoloPublicParityFinal(patchPublicProfileViewerAndSettings(patchSoloFinalChipCountPolish(patchSoloNoOverlapCleanup(patchSoloOpponentIdentityLayout(patchSoloOrganizedPotOpponentStacks(patchSoloProfessionalPotSeatLayout(patchSoloGameplayVisualFixes(patchSoloTablePresentation(source)))))))));
+  source = patchSoloTransparentBetDisplay(patchSoloPublicParityFinal(patchPublicProfileViewerAndSettings(patchSoloFinalChipCountPolish(patchSoloNoOverlapCleanup(patchSoloOpponentIdentityLayout(patchSoloOrganizedPotOpponentStacks(patchSoloProfessionalPotSeatLayout(patchSoloGameplayVisualFixes(patchSoloTablePresentation(source))))))))));
   const match = source.match(/const encoded='([A-Za-z0-9+/=]+)';/);
   if (!match) throw new Error('V55 patch could not locate the embedded multiplayer client.');
   const multiplayer = Buffer.from(match[1], 'base64').toString('utf8');
@@ -1762,4 +1843,4 @@ if (require.main === module) {
   catch (err) { console.error(`Sivel Poker V55 patch failed: ${err.message}`); process.exit(1); }
 }
 
-module.exports = { patchServer, patchSoloTablePresentation, patchSoloGameplayVisualFixes, patchSoloProfessionalPotSeatLayout, patchSoloOrganizedPotOpponentStacks, patchSoloOpponentIdentityLayout, patchSoloNoOverlapCleanup, patchSoloFinalChipCountPolish, patchPublicProfileViewerAndSettings, patchProfessionalPotSeatLayoutClient, patchOrganizedPotOpponentStacksClient, patchOpponentIdentityProfileClient, patchProfessionalNoOverlapCleanupClient, patchFinalActionPotPolishClient, patchRemoveBottomPublicProfileClient, patchPublicSelfIdentityFinalClient, patchSoloPublicParityFinal, patchMultiplayerHtml, patchIndex };
+module.exports = { patchServer, patchSoloTablePresentation, patchSoloGameplayVisualFixes, patchSoloProfessionalPotSeatLayout, patchSoloOrganizedPotOpponentStacks, patchSoloOpponentIdentityLayout, patchSoloNoOverlapCleanup, patchSoloFinalChipCountPolish, patchPublicProfileViewerAndSettings, patchProfessionalPotSeatLayoutClient, patchOrganizedPotOpponentStacksClient, patchOpponentIdentityProfileClient, patchProfessionalNoOverlapCleanupClient, patchFinalActionPotPolishClient, patchRemoveBottomPublicProfileClient, patchPublicSelfIdentityFinalClient, patchPublicGhostSeatRemovalClient, patchSoloPublicParityFinal, patchSoloTransparentBetDisplay, patchMultiplayerHtml, patchIndex };
