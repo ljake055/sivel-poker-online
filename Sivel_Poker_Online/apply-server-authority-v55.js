@@ -1501,8 +1501,34 @@ function patchSoloFinalChipCountPolish(source) {
   return replaceOnce(source, '</head>', css + '\n</head>', 'solo chip-count readability polish');
 }
 
+
+function patchRemoveBottomPublicProfileClient(source) {
+  if (source.includes('SIVEL_REMOVE_BOTTOM_PUBLIC_PROFILE')) return source;
+
+  const css = `<style id="sivel-remove-bottom-public-profile">
+/* SIVEL_REMOVE_BOTTOM_PUBLIC_PROFILE — remove only the redundant lower self profile from public tables. */
+#gameScreen.sivel-public-table-profile-cleanup #seats .seat.self-seat > .seat-core{
+  visibility:hidden!important;opacity:0!important;pointer-events:none!important
+}
+</style>`;
+  source = replaceOnce(source, '</head>', css + '\n</head>', 'bottom public profile removal styles');
+
+  const runtime = `
+/* SIVEL_REMOVE_BOTTOM_PUBLIC_PROFILE runtime */
+function sivelSyncPublicBottomProfileCleanup(){
+  const screen=document.getElementById('gameScreen');
+  if(screen)screen.classList.toggle('sivel-public-table-profile-cleanup',!!(state&&state.isPublic));
+}
+const sivelBottomProfileBaseRenderGame=renderGame;
+renderGame=function(){sivelSyncPublicBottomProfileCleanup();return sivelBottomProfileBaseRenderGame.apply(this,arguments)};
+const sivelBottomProfileBaseWaiting=renderPublicWaitingTable;
+renderPublicWaitingTable=function(){sivelSyncPublicBottomProfileCleanup();return sivelBottomProfileBaseWaiting.apply(this,arguments)};
+`;
+  return replaceOnce(source, 'async function api(path,body={}){', runtime + '\nasync function api(path,body={}){', 'bottom public profile removal runtime');
+}
+
 function patchMultiplayerHtml(source) {
-  if (source.includes(CLIENT_MARKER)) return patchFinalActionPotPolishClient(patchProfessionalNoOverlapCleanupClient(patchOpponentIdentityProfileClient(patchOrganizedPotOpponentStacksClient(patchProfessionalPotSeatLayoutClient(patchGameplayVisualFixesClient(patchPremiumTablePresentationClient(patchProfessionalTableClient(patchAllInShowdownClient(patchBustTopUpClient(source))))))))));
+  if (source.includes(CLIENT_MARKER)) return patchRemoveBottomPublicProfileClient(patchFinalActionPotPolishClient(patchProfessionalNoOverlapCleanupClient(patchOpponentIdentityProfileClient(patchOrganizedPotOpponentStacksClient(patchProfessionalPotSeatLayoutClient(patchGameplayVisualFixesClient(patchPremiumTablePresentationClient(patchProfessionalTableClient(patchAllInShowdownClient(patchBustTopUpClient(source)))))))))));
 
   source = replaceOnce(
     source,
@@ -1593,7 +1619,7 @@ let clientTimeoutActionKey = '';`,
     'explicit check versus call action'
   );
 
-  return patchFinalActionPotPolishClient(patchProfessionalNoOverlapCleanupClient(patchOpponentIdentityProfileClient(patchOrganizedPotOpponentStacksClient(patchProfessionalPotSeatLayoutClient(patchGameplayVisualFixesClient(patchPremiumTablePresentationClient(patchProfessionalTableClient(patchAllInShowdownClient(patchBustTopUpClient(source))))))))));
+  return patchRemoveBottomPublicProfileClient(patchFinalActionPotPolishClient(patchProfessionalNoOverlapCleanupClient(patchOpponentIdentityProfileClient(patchOrganizedPotOpponentStacksClient(patchProfessionalPotSeatLayoutClient(patchGameplayVisualFixesClient(patchPremiumTablePresentationClient(patchProfessionalTableClient(patchAllInShowdownClient(patchBustTopUpClient(source)))))))))));
 }
 
 function patchIndex(source) {
@@ -1645,4 +1671,4 @@ if (require.main === module) {
   catch (err) { console.error(`Sivel Poker V55 patch failed: ${err.message}`); process.exit(1); }
 }
 
-module.exports = { patchServer, patchSoloTablePresentation, patchSoloGameplayVisualFixes, patchSoloProfessionalPotSeatLayout, patchSoloOrganizedPotOpponentStacks, patchSoloOpponentIdentityLayout, patchSoloNoOverlapCleanup, patchSoloFinalChipCountPolish, patchPublicProfileViewerAndSettings, patchProfessionalPotSeatLayoutClient, patchOrganizedPotOpponentStacksClient, patchOpponentIdentityProfileClient, patchProfessionalNoOverlapCleanupClient, patchFinalActionPotPolishClient, patchMultiplayerHtml, patchIndex };
+module.exports = { patchServer, patchSoloTablePresentation, patchSoloGameplayVisualFixes, patchSoloProfessionalPotSeatLayout, patchSoloOrganizedPotOpponentStacks, patchSoloOpponentIdentityLayout, patchSoloNoOverlapCleanup, patchSoloFinalChipCountPolish, patchPublicProfileViewerAndSettings, patchProfessionalPotSeatLayoutClient, patchOrganizedPotOpponentStacksClient, patchOpponentIdentityProfileClient, patchProfessionalNoOverlapCleanupClient, patchFinalActionPotPolishClient, patchRemoveBottomPublicProfileClient, patchMultiplayerHtml, patchIndex };
