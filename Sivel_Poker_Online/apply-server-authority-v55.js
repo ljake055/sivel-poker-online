@@ -1172,8 +1172,180 @@ function patchSoloOrganizedPotOpponentStacks(source) {
   return replaceOnce(source, '</head>', css + '\n</head>', 'solo organized pot and opponent stacks');
 }
 
+
+function patchOpponentIdentityProfileClient(source) {
+  if (source.includes('SIVEL_OPPONENT_IDENTITY_PROFILE_LAYOUT')) return source;
+
+  source = replaceOnce(
+    source,
+    `root.innerHTML='<div class="seat-cards"></div><div class="bet-chip"></div><div class="seat-core"><div class="avatar"></div><div class="seat-name"><strong></strong><span></span><span class="seat-status-tag hidden"></span></div><div class="position-badges"><span class="badge sivel-position-d hidden">D</span><span class="blind-badge sivel-position-sb hidden">SB</span><span class="blind-badge sivel-position-bb hidden">BB</span></div></div>';`,
+    `root.innerHTML='<div class="seat-cards"></div><div class="bet-chip"></div><div class="seat-core sivel-profile-trigger" role="button" tabindex="0"><div class="avatar"></div><div class="seat-name"><strong></strong><span></span><span class="seat-status-tag hidden"></span></div></div><div class="position-badges"><span class="badge sivel-position-d hidden">D</span><span class="blind-badge sivel-position-sb hidden">SB</span><span class="blind-badge sivel-position-bb hidden">BB</span></div>';`,
+    'public player identity above cards'
+  );
+
+  const css = `<style id="sivel-opponent-identity-profile-layout">
+/* SIVEL_OPPONENT_IDENTITY_PROFILE_LAYOUT — unified identity and stack above cards; blind chips sit cleanly on the felt. */
+.seat:not(.self-seat):not(.open-seat)[data-stack]::before,.seat:not(.self-seat):not(.open-seat)[data-stack]::after{display:none!important;content:none!important}
+.seat:not(.self-seat):not(.open-seat) .seat-core.sivel-profile-trigger{
+  position:absolute!important;left:50%!important;right:auto!important;top:-4px!important;bottom:auto!important;
+  transform:translate(-50%,-100%)!important;z-index:16!important;min-width:154px!important;max-width:178px!important;
+  padding:6px 9px!important;gap:7px!important;border-radius:13px!important;cursor:pointer!important;
+  background:linear-gradient(180deg,rgba(15,27,39,.98),rgba(5,11,17,.99))!important;
+  border:1px solid rgba(91,125,151,.7)!important;box-shadow:0 7px 17px rgba(0,0,0,.48),inset 0 1px 0 rgba(255,255,255,.06)!important;
+  transition:border-color .16s ease,filter .16s ease,transform .16s ease!important
+}
+.seat:not(.self-seat):not(.open-seat) .seat-core.sivel-profile-trigger:hover,.seat:not(.self-seat):not(.open-seat) .seat-core.sivel-profile-trigger:focus-visible{border-color:#e6c66f!important;filter:brightness(1.08);outline:none!important;transform:translate(-50%,-100%) translateY(-2px)!important}
+.seat:not(.self-seat):not(.open-seat) .seat-core .avatar{width:32px!important;height:32px!important;flex:0 0 32px!important;font-size:16px!important}
+.seat:not(.self-seat):not(.open-seat) .seat-name{min-width:0!important;flex:1!important;text-align:left!important}
+.seat:not(.self-seat):not(.open-seat) .seat-name strong{max-width:112px!important;font-size:10px!important;line-height:1.1!important}
+.seat:not(.self-seat):not(.open-seat) .seat-name>span:not(.seat-status-tag){
+  display:flex!important;align-items:center!important;gap:4px!important;width:max-content!important;margin-top:3px!important;padding:1px 6px 1px 3px!important;
+  border-radius:999px!important;color:#f2d78d!important;font-size:9px!important;line-height:1.2!important;background:rgba(5,12,18,.72)!important;
+  border:1px solid rgba(220,184,91,.31)!important;box-shadow:none!important
+}
+.seat:not(.self-seat):not(.open-seat) .seat-name>span:not(.seat-status-tag)::before{content:'';width:10px;height:10px;flex:0 0 10px;border-radius:50%;background:repeating-conic-gradient(from 0deg,#efd079 0 12deg,#815019 12deg 24deg);border:1px solid #f2db99;box-shadow:inset 0 0 0 2px #8b5717}
+.seat:not(.self-seat):not(.open-seat) .position-badges{
+  position:absolute!important;left:calc(50% + 54px)!important;right:auto!important;top:88px!important;bottom:auto!important;transform:none!important;
+  z-index:17!important;display:flex!important;flex-direction:row!important;align-items:center!important;gap:3px!important;padding:0!important;
+  background:transparent!important;border:0!important;box-shadow:none!important;pointer-events:none!important
+}
+.seat.self-seat .position-badges{position:absolute!important;left:calc(50% + 82px)!important;right:auto!important;top:auto!important;bottom:7px!important;transform:none!important;flex-direction:column!important;background:transparent!important;border:0!important;box-shadow:none!important}
+.position-badges .blind-badge{width:22px!important;height:22px!important;border-radius:50%!important;padding:0!important;background:radial-gradient(circle at 35% 28%,rgba(65,85,105,.98),rgba(10,18,27,.98) 70%)!important;color:#f2d58a!important;border:1px solid rgba(226,191,105,.72)!important;box-shadow:0 3px 8px rgba(0,0,0,.42),inset 0 1px 0 rgba(255,255,255,.08)!important}
+.position-badges .badge{box-shadow:0 3px 8px rgba(0,0,0,.42)!important}
+.seat.slot-top:not(.self-seat):not(.open-seat){top:62px!important}
+.seat.slot-upper-left:not(.self-seat):not(.open-seat){top:132px!important}
+.public-player-avatar[data-sivel-profile-name]{cursor:pointer}
+@media(max-width:760px){
+  .seat:not(.self-seat):not(.open-seat) .seat-core.sivel-profile-trigger{top:-2px!important;min-width:112px!important;max-width:128px!important;padding:4px 6px!important;gap:5px!important;border-radius:10px!important}
+  .seat:not(.self-seat):not(.open-seat) .seat-core .avatar{display:grid!important;width:25px!important;height:25px!important;flex-basis:25px!important;font-size:13px!important}
+  .seat:not(.self-seat):not(.open-seat) .seat-name strong{max-width:82px!important;font-size:8px!important}
+  .seat:not(.self-seat):not(.open-seat) .seat-name>span:not(.seat-status-tag){font-size:8px!important;padding-right:5px!important}
+  .seat:not(.self-seat):not(.open-seat) .position-badges{left:calc(50% + 43px)!important;top:72px!important}
+  .seat.self-seat .position-badges{left:calc(50% + 61px)!important;bottom:5px!important}
+  .position-badges .blind-badge{width:19px!important;height:19px!important;font-size:7px!important}
+  .seat.slot-top:not(.self-seat):not(.open-seat){top:53px!important}
+  .seat.slot-upper-left:not(.self-seat):not(.open-seat){top:126px!important}
+}
+</style>`;
+  source = replaceOnce(source, '</head>', css + '\n</head>', 'opponent identity and blind layout styles');
+
+  const runtime = `
+/* SIVEL_OPPONENT_IDENTITY_PROFILE_LAYOUT runtime */
+function sivelOpenPublicSeatProfile(target){
+  const seat=target&&target.closest?target.closest('#seats .seat[data-player-index]'):null;
+  if(!seat||!state||!state.isPublic||seat.classList.contains('open-seat'))return;
+  const index=Number(seat.dataset.playerIndex),player=state.players&&state.players[index];if(!player||!player.name)return;
+  window.parent.postMessage({type:'sivel-open-public-player-profile',player:{name:String(player.name||''),avatar:String(avatarFor(player)||'♠'),isSelf:!!player.isSelf}},'*');
+}
+document.addEventListener('click',function(event){const trigger=event.target&&event.target.closest?event.target.closest('#seats .seat .sivel-profile-trigger'):null;if(!trigger)return;event.preventDefault();event.stopPropagation();sivelOpenPublicSeatProfile(trigger)});
+document.addEventListener('keydown',function(event){if(event.key!=='Enter'&&event.key!==' ')return;const trigger=event.target&&event.target.closest?event.target.closest('#seats .seat .sivel-profile-trigger'):null;if(!trigger)return;event.preventDefault();sivelOpenPublicSeatProfile(trigger)});
+`;
+  return replaceOnce(source, 'async function api(path,body={}){', runtime + '\nasync function api(path,body={}){', 'public seat profile interaction');
+}
+
+function patchSoloOpponentIdentityLayout(source) {
+  if (source.includes('SIVEL_SOLO_OPPONENT_IDENTITY_LAYOUT')) return source;
+
+  source = replaceOnce(
+    source,
+    `el.innerHTML='<div class="seat-cards"></div><div class="bet-badge"></div><div class="seat-core"><div class="seat-avatar">'+p.avatar+'</div><div class="seat-name"><strong>'+p.name+(p.human?' · YOU':'')+'</strong><span>0</span><em class="solo-seat-status"></em></div><div class="position-badges"><div class="dealer hidden">D</div><div class="blind-badge solo-sb hidden">SB</div><div class="blind-badge solo-bb hidden">BB</div></div></div>';`,
+    `el.innerHTML='<div class="seat-cards"></div><div class="bet-badge"></div><div class="seat-core"><div class="seat-avatar">'+p.avatar+'</div><div class="seat-name"><strong>'+p.name+(p.human?' · YOU':'')+'</strong><span>0</span><em class="solo-seat-status"></em></div></div><div class="position-badges"><div class="dealer hidden">D</div><div class="blind-badge solo-sb hidden">SB</div><div class="blind-badge solo-bb hidden">BB</div></div>';`,
+    'solo identity above cards structure'
+  );
+
+  const css = `<style id="sivel-solo-opponent-identity-layout">
+/* SIVEL_SOLO_OPPONENT_IDENTITY_LAYOUT — visual parity for AI seats without social actions. */
+#gameScreen .seat:not(.self-seat)[data-stack]::before,#gameScreen .seat:not(.self-seat)[data-stack]::after{display:none!important;content:none!important}
+#gameScreen .seat:not(.self-seat) .seat-core{
+  position:absolute!important;left:50%!important;right:auto!important;top:-4px!important;bottom:auto!important;transform:translate(-50%,-100%)!important;
+  z-index:16!important;min-width:154px!important;max-width:178px!important;padding:6px 9px!important;gap:7px!important;border-radius:13px!important;
+  background:linear-gradient(180deg,rgba(15,27,39,.98),rgba(5,11,17,.99))!important;border:1px solid rgba(91,125,151,.7)!important;
+  box-shadow:0 7px 17px rgba(0,0,0,.48),inset 0 1px 0 rgba(255,255,255,.06)!important
+}
+#gameScreen .seat:not(.self-seat) .seat-avatar{width:32px!important;height:32px!important;flex:0 0 32px!important;font-size:16px!important}
+#gameScreen .seat:not(.self-seat) .seat-name{min-width:0!important;flex:1!important;text-align:left!important}
+#gameScreen .seat:not(.self-seat) .seat-name strong{max-width:112px!important;font-size:10px!important;line-height:1.1!important}
+#gameScreen .seat:not(.self-seat) .seat-name>span{display:flex!important;align-items:center!important;gap:4px!important;width:max-content!important;margin-top:3px!important;padding:1px 6px 1px 3px!important;border-radius:999px!important;color:#f2d78d!important;font-size:9px!important;line-height:1.2!important;background:rgba(5,12,18,.72)!important;border:1px solid rgba(220,184,91,.31)!important;box-shadow:none!important}
+#gameScreen .seat:not(.self-seat) .seat-name>span::before{content:'';width:10px;height:10px;flex:0 0 10px;border-radius:50%;background:repeating-conic-gradient(from 0deg,#efd079 0 12deg,#815019 12deg 24deg);border:1px solid #f2db99;box-shadow:inset 0 0 0 2px #8b5717}
+#gameScreen .seat:not(.self-seat) .position-badges{position:absolute!important;left:calc(50% + 54px)!important;right:auto!important;top:88px!important;bottom:auto!important;transform:none!important;z-index:17!important;display:flex!important;flex-direction:row!important;align-items:center!important;gap:3px!important;padding:0!important;background:transparent!important;border:0!important;box-shadow:none!important;pointer-events:none!important}
+#gameScreen .seat.self-seat .position-badges{position:absolute!important;left:calc(50% + 82px)!important;right:auto!important;top:auto!important;bottom:7px!important;transform:none!important;flex-direction:column!important;background:transparent!important;border:0!important;box-shadow:none!important}
+#gameScreen .position-badges .blind-badge{width:22px!important;height:22px!important;border-radius:50%!important;padding:0!important;background:radial-gradient(circle at 35% 28%,rgba(65,85,105,.98),rgba(10,18,27,.98) 70%)!important;color:#f2d58a!important;border:1px solid rgba(226,191,105,.72)!important;box-shadow:0 3px 8px rgba(0,0,0,.42),inset 0 1px 0 rgba(255,255,255,.08)!important}
+#gameScreen .seat.slot-top:not(.self-seat){top:62px!important}
+#gameScreen .seat.slot-upper-left:not(.self-seat){top:132px!important}
+@media(max-width:860px){
+  #gameScreen .seat:not(.self-seat) .seat-core{top:-2px!important;min-width:112px!important;max-width:128px!important;padding:4px 6px!important;gap:5px!important;border-radius:10px!important}
+  #gameScreen .seat:not(.self-seat) .seat-avatar{display:grid!important;width:25px!important;height:25px!important;flex-basis:25px!important;font-size:13px!important}
+  #gameScreen .seat:not(.self-seat) .seat-name strong{max-width:82px!important;font-size:8px!important}
+  #gameScreen .seat:not(.self-seat) .seat-name>span{font-size:8px!important;padding-right:5px!important}
+  #gameScreen .seat:not(.self-seat) .position-badges{left:calc(50% + 43px)!important;top:72px!important}
+  #gameScreen .seat.self-seat .position-badges{left:calc(50% + 61px)!important;bottom:5px!important}
+  #gameScreen .position-badges .blind-badge{width:19px!important;height:19px!important;font-size:7px!important}
+  #gameScreen .seat.slot-top:not(.self-seat){top:53px!important}
+  #gameScreen .seat.slot-upper-left:not(.self-seat){top:126px!important}
+}
+</style>`;
+  return replaceOnce(source, '</head>', css + '\n</head>', 'solo opponent identity and blind layout styles');
+}
+
+function patchPublicProfileViewerAndSettings(source) {
+  if (source.includes('SIVEL_PUBLIC_PROFILE_VIEWER_SETTINGS_SCROLL')) return source;
+
+  source = replaceOnce(
+    source,
+    `(table.players||[]).map(player=>\`<span class="public-player-avatar" title="${'${publicEsc(player.name)}'}">${'${publicEsc(player.avatar||\'♠\')}'}</span>\`).join('')`,
+    `(table.players||[]).map(player=>\`<button type="button" class="public-player-avatar" data-sivel-profile-name="${'${publicEsc(player.name)}'}" data-sivel-profile-avatar="${'${publicEsc(player.avatar||\'♠\')}' }" title="View ${'${publicEsc(player.name)}'}\'s profile" aria-label="View ${'${publicEsc(player.name)}'}\'s profile">${'${publicEsc(player.avatar||\'♠\')}'}</button>\`).join('')`,
+    'public floor profile buttons'
+  );
+
+  const css = `<style id="sivel-public-profile-viewer-settings-scroll">
+/* SIVEL_PUBLIC_PROFILE_VIEWER_SETTINGS_SCROLL — public player profiles plus usable settings overflow. */
+.settings-modal{max-height:min(86vh,780px)!important;overflow-y:auto!important;overscroll-behavior:contain!important;scrollbar-gutter:stable;padding-right:18px!important}
+#settingsOverlay{overflow:auto!important;align-items:flex-start!important;padding:7vh 12px!important}
+.public-player-avatar[data-sivel-profile-name]{appearance:none;padding:0;color:inherit;cursor:pointer;transition:transform .15s ease,border-color .15s ease,filter .15s ease}
+.public-player-avatar[data-sivel-profile-name]:hover,.public-player-avatar[data-sivel-profile-name]:focus-visible{z-index:4;transform:translateY(-3px);border-color:#e5c36c!important;filter:brightness(1.12);outline:none}
+#publicPlayerProfileOverlay{position:fixed!important;inset:0!important;z-index:10020!important;display:grid;place-items:center;padding:18px;background:rgba(2,7,11,.8);backdrop-filter:blur(8px)}
+#publicPlayerProfileOverlay.hidden{display:none!important}
+.public-player-profile-modal{width:min(620px,94vw);max-height:min(86vh,760px);overflow:auto;padding:0;border-radius:20px;background:linear-gradient(180deg,#101d2a,#07111a);border:1px solid #36516a;box-shadow:0 28px 80px rgba(0,0,0,.65)}
+.public-profile-head{display:grid;grid-template-columns:72px minmax(0,1fr) auto;gap:14px;align-items:center;padding:18px;border-bottom:1px solid #263b4e;background:linear-gradient(180deg,rgba(26,43,59,.9),rgba(10,20,29,.9))}
+.public-profile-avatar{width:72px;height:72px;border-radius:50%;display:grid;place-items:center;font-size:34px;background:radial-gradient(circle at 35% 25%,#426789,#0a141d 68%);border:2px solid #dfbb62;box-shadow:0 0 0 4px #09121a,0 0 24px rgba(223,187,98,.22)}
+.public-profile-head h2{margin:0;font-size:22px}.public-profile-head p{margin:5px 0 0;color:#8da3b6;font-size:11px}.public-profile-close{width:36px;height:36px;border-radius:11px;border:1px solid #385069;background:#0a1621;color:#dce8f2;font-size:21px;cursor:pointer}
+.public-profile-body{padding:18px}.public-profile-bio{padding:13px 14px;border-radius:13px;background:#09151f;border:1px solid #253c50;color:#b8c8d5;font-size:12px;line-height:1.55}.public-profile-bio em{color:#71889b}
+.public-profile-stats{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:8px;margin-top:12px}.public-profile-stat{padding:11px;border-radius:12px;background:#0b1722;border:1px solid #263d51;text-align:center}.public-profile-stat small{display:block;color:#728a9e;font-size:7px;letter-spacing:.1em}.public-profile-stat strong{display:block;margin-top:4px;color:#f0d287;font-size:16px}
+.public-profile-actions{display:flex;justify-content:flex-end;gap:9px;margin-top:15px}.public-profile-actions button{min-height:40px;padding:0 14px;border-radius:11px;border:1px solid #36526b;background:#102131;color:#dce9f3;font-weight:900;cursor:pointer}.public-profile-actions button.primary{border-color:#a87c2e;background:linear-gradient(180deg,#eccd7c,#b87a25);color:#241605}.public-profile-actions button:disabled{opacity:.5;cursor:default}
+.public-profile-message{min-height:18px;margin-top:10px;color:#efcd78;font-size:11px}.public-profile-loading,.public-profile-empty{padding:30px;text-align:center;color:#8ca1b3}.public-profile-choice-list{display:grid;gap:8px}.public-profile-choice{display:grid;grid-template-columns:42px 1fr auto;gap:10px;align-items:center;padding:10px;border-radius:12px;border:1px solid #294156;background:#0a1620;color:#e5edf4;text-align:left;cursor:pointer}.public-profile-choice .avatar{width:42px;height:42px;border-radius:50%;display:grid;place-items:center;background:#172a3c;border:1px solid #49677f;font-size:21px}.public-profile-choice strong{display:block}.public-profile-choice small{display:block;color:#8197aa;margin-top:2px}
+@media(max-width:650px){#settingsOverlay{padding:18px 8px!important}.settings-modal{max-height:calc(100dvh - 36px)!important}.public-profile-head{grid-template-columns:58px 1fr auto}.public-profile-avatar{width:58px;height:58px;font-size:28px}.public-profile-stats{grid-template-columns:1fr 1fr}.public-profile-actions{flex-direction:column}.public-profile-actions button{width:100%}}
+</style>`;
+  source = replaceOnce(source, '</head>', css + '\n</head>', 'public profile viewer and settings scroll styles');
+
+  const markup = `<div class="hidden" id="publicPlayerProfileOverlay" aria-hidden="true"><div class="public-player-profile-modal" role="dialog" aria-modal="true" aria-labelledby="publicPlayerProfileName"><div class="public-profile-head"><div class="public-profile-avatar" id="publicPlayerProfileAvatar">♠</div><div><h2 id="publicPlayerProfileName">Player Profile</h2><p id="publicPlayerProfileHandle">Loading account…</p></div><button class="public-profile-close" id="publicPlayerProfileClose" type="button" aria-label="Close player profile">×</button></div><div class="public-profile-body" id="publicPlayerProfileBody"><div class="public-profile-loading">Loading profile…</div></div></div></div>`;
+  source = replaceOnce(source, '</body>', markup + '\n</body>', 'public player profile modal');
+
+  const runtime = `<script id="sivel-public-profile-viewer-runtime">
+(() => {
+'use strict';
+const overlay=document.getElementById('publicPlayerProfileOverlay'),body=document.getElementById('publicPlayerProfileBody'),avatar=document.getElementById('publicPlayerProfileAvatar'),nameEl=document.getElementById('publicPlayerProfileName'),handle=document.getElementById('publicPlayerProfileHandle');
+if(!overlay||!body)return;
+const esc=value=>String(value??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#039;'}[c]));
+let selectedUser=null,selectedProfile=null;
+const account=()=>window.SivelAccount?.account||null;
+async function request(path,options){if(!window.SivelAccount?.token)throw new Error('Sign in to view public player profiles.');return window.SivelAccount.request(path,options)}
+function openShell(candidate){overlay.classList.remove('hidden');overlay.setAttribute('aria-hidden','false');avatar.textContent=candidate?.avatar||'♠';nameEl.textContent=candidate?.name||'Player Profile';handle.textContent='Loading account…';body.innerHTML='<div class="public-profile-loading">Loading profile…</div>'}
+function close(){overlay.classList.add('hidden');overlay.setAttribute('aria-hidden','true');selectedUser=null;selectedProfile=null}
+function stats(profile){const hands=Number(profile.handsPlayed||0),won=Number(profile.handsWon||0),rate=hands?Math.round(won/hands*100):0;return [{l:'LEVEL',v:Number(profile.level||1).toLocaleString()},{l:'TABLE WINS',v:Number(profile.tablesWon||0).toLocaleString()},{l:'WIN RATE',v:rate+'%'},{l:'BIGGEST POT',v:Number(profile.biggestPot||0).toLocaleString()}]}
+function primaryState(user){const mine=Number(account()?.id||0)===Number(user.id||0);if(mine)return{label:'Edit My Profile',kind:'self'};if(user.blockedByMe)return{label:'Blocked',kind:'blocked',disabled:true};if(user.isFriend)return{label:'Open Friends Hub',kind:'friend'};if(user.incomingRequestId)return{label:'Accept Friend Request',kind:'accept'};if(user.outgoingRequestId)return{label:'Request Pending',kind:'pending',disabled:true};return{label:'Add Friend',kind:'add'}}
+function renderProfile(user,profile,message=''){selectedUser=user;selectedProfile=profile;avatar.textContent=profile.avatar||user.avatar||'♠';nameEl.textContent=profile.displayName||user.displayName||'Player';handle.textContent='@'+(profile.username||user.username||'player')+' · Level '+Number(profile.level||1)+' · '+(profile.online?'Online now':'Offline');const state=primaryState(user);body.innerHTML='<div class="public-profile-bio">'+(profile.bio?esc(profile.bio):'<em>No profile bio yet.</em>')+'</div><div class="public-profile-stats">'+stats(profile).map(item=>'<div class="public-profile-stat"><small>'+item.l+'</small><strong>'+item.v+'</strong></div>').join('')+'</div><div class="public-profile-actions"><button type="button" id="publicProfileFriendsHub">Friends Hub</button><button type="button" class="primary" id="publicProfilePrimary" '+(state.disabled?'disabled':'')+'>'+esc(state.label)+'</button></div><div class="public-profile-message" id="publicProfileMessage">'+esc(message)+'</div>';document.getElementById('publicProfileFriendsHub').onclick=()=>{close();document.getElementById('socialHubBtn')?.click()};document.getElementById('publicProfilePrimary').onclick=()=>runPrimary(state)}
+async function runPrimary(state){const message=document.getElementById('publicProfileMessage'),button=document.getElementById('publicProfilePrimary');if(!selectedUser)return;if(state.kind==='self'){close();document.getElementById('profileButton')?.click();return}if(state.kind==='friend'){close();document.getElementById('socialHubBtn')?.click();return}button.disabled=true;try{if(state.kind==='accept'){await request('/api/social/friend-response',{method:'POST',body:{requestId:Number(selectedUser.incomingRequestId),action:'accept'}});selectedUser.incomingRequestId=0;selectedUser.isFriend=true;renderProfile(selectedUser,selectedProfile,'Friend request accepted.')}else if(state.kind==='add'){await request('/api/social/friend-request',{method:'POST',body:{userId:Number(selectedUser.id)}});selectedUser.outgoingRequestId=1;renderProfile(selectedUser,selectedProfile,'Friend request sent.')}}catch(err){button.disabled=false;if(message)message.textContent=err.message||'The friend action could not be completed.'}}
+async function loadUser(user){try{const data=await request('/api/social/profile?userId='+encodeURIComponent(user.id));renderProfile(user,data.profile)}catch(err){body.innerHTML='<div class="public-profile-empty">'+esc(err.message||'Profile could not be loaded.')+'</div>'}}
+function renderChoices(users){handle.textContent='Choose the matching account';body.innerHTML='<div class="public-profile-choice-list">'+users.map(user=>'<button class="public-profile-choice" type="button" data-public-profile-id="'+Number(user.id)+'"><span class="avatar">'+esc(user.avatar||'♠')+'</span><span><strong>'+esc(user.displayName||user.username)+'</strong><small>@'+esc(user.username||'player')+'</small></span><span>View ›</span></button>').join('')+'</div>';body.querySelectorAll('[data-public-profile-id]').forEach(button=>button.onclick=()=>{const user=users.find(item=>Number(item.id)===Number(button.dataset.publicProfileId));if(user)loadUser(user)})}
+async function open(candidate){candidate=candidate||{};openShell(candidate);try{const mine=account();if(candidate.isSelf&&mine?.id){await loadUser({id:mine.id,displayName:mine.displayName,username:mine.username,avatar:mine.avatar,isFriend:false});return}const query=String(candidate.name||'').trim();if(query.length<2)throw new Error('This player profile is not available.');const data=await request('/api/social/search?q='+encodeURIComponent(query));let users=(data.users||[]).filter(user=>String(user.displayName||'').toLowerCase()===query.toLowerCase());if(candidate.avatar&&users.length>1){const matching=users.filter(user=>String(user.avatar||'')===String(candidate.avatar));if(matching.length)users=matching}if(!users.length&&data.users?.length===1)users=data.users;if(!users.length)throw new Error('This player account could not be matched.');if(users.length>1){renderChoices(users);return}await loadUser(users[0])}catch(err){handle.textContent='Profile unavailable';body.innerHTML='<div class="public-profile-empty">'+esc(err.message||'Profile could not be loaded.')+'</div>'}}
+document.getElementById('publicPlayerProfileClose').onclick=close;overlay.addEventListener('click',event=>{if(event.target===overlay)close()});document.addEventListener('click',event=>{const trigger=event.target.closest?.('[data-sivel-profile-name]');if(!trigger)return;event.preventDefault();event.stopPropagation();open({name:trigger.dataset.sivelProfileName,avatar:trigger.dataset.sivelProfileAvatar})});window.addEventListener('message',event=>{if(event.data?.type==='sivel-open-public-player-profile')open(event.data.player||{})});window.addEventListener('keydown',event=>{if(event.key==='Escape'&&!overlay.classList.contains('hidden'))close()});window.SivelOpenPublicPlayerProfile=open;
+})();
+</script>`;
+  return replaceOnce(source, '</body>', runtime + '\n</body>', 'public profile viewer runtime');
+}
+
 function patchMultiplayerHtml(source) {
-  if (source.includes(CLIENT_MARKER)) return patchOrganizedPotOpponentStacksClient(patchProfessionalPotSeatLayoutClient(patchGameplayVisualFixesClient(patchPremiumTablePresentationClient(patchProfessionalTableClient(patchAllInShowdownClient(patchBustTopUpClient(source)))))));
+  if (source.includes(CLIENT_MARKER)) return patchOpponentIdentityProfileClient(patchOrganizedPotOpponentStacksClient(patchProfessionalPotSeatLayoutClient(patchGameplayVisualFixesClient(patchPremiumTablePresentationClient(patchProfessionalTableClient(patchAllInShowdownClient(patchBustTopUpClient(source))))))));
 
   source = replaceOnce(
     source,
@@ -1264,11 +1436,11 @@ let clientTimeoutActionKey = '';`,
     'explicit check versus call action'
   );
 
-  return patchOrganizedPotOpponentStacksClient(patchProfessionalPotSeatLayoutClient(patchGameplayVisualFixesClient(patchPremiumTablePresentationClient(patchProfessionalTableClient(patchAllInShowdownClient(patchBustTopUpClient(source)))))));
+  return patchOpponentIdentityProfileClient(patchOrganizedPotOpponentStacksClient(patchProfessionalPotSeatLayoutClient(patchGameplayVisualFixesClient(patchPremiumTablePresentationClient(patchProfessionalTableClient(patchAllInShowdownClient(patchBustTopUpClient(source))))))));
 }
 
 function patchIndex(source) {
-  source = patchSoloOrganizedPotOpponentStacks(patchSoloProfessionalPotSeatLayout(patchSoloGameplayVisualFixes(patchSoloTablePresentation(source))));
+  source = patchPublicProfileViewerAndSettings(patchSoloOpponentIdentityLayout(patchSoloOrganizedPotOpponentStacks(patchSoloProfessionalPotSeatLayout(patchSoloGameplayVisualFixes(patchSoloTablePresentation(source))))));
   const match = source.match(/const encoded='([A-Za-z0-9+/=]+)';/);
   if (!match) throw new Error('V55 patch could not locate the embedded multiplayer client.');
   const multiplayer = Buffer.from(match[1], 'base64').toString('utf8');
@@ -1316,4 +1488,4 @@ if (require.main === module) {
   catch (err) { console.error(`Sivel Poker V55 patch failed: ${err.message}`); process.exit(1); }
 }
 
-module.exports = { patchServer, patchSoloTablePresentation, patchSoloGameplayVisualFixes, patchSoloProfessionalPotSeatLayout, patchSoloOrganizedPotOpponentStacks, patchProfessionalPotSeatLayoutClient, patchOrganizedPotOpponentStacksClient, patchMultiplayerHtml, patchIndex };
+module.exports = { patchServer, patchSoloTablePresentation, patchSoloGameplayVisualFixes, patchSoloProfessionalPotSeatLayout, patchSoloOrganizedPotOpponentStacks, patchSoloOpponentIdentityLayout, patchPublicProfileViewerAndSettings, patchProfessionalPotSeatLayoutClient, patchOrganizedPotOpponentStacksClient, patchOpponentIdentityProfileClient, patchMultiplayerHtml, patchIndex };
