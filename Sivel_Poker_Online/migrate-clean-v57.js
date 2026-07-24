@@ -17,7 +17,7 @@ const BASELINE_MARKER = 'SIVEL_CLEAN_BASELINE_V57';
 const MULTIPLAYER_MARKER = 'SIVEL_CLEAN_MULTIPLAYER_V57';
 const SEAT_OWNERSHIP_MARKER = 'SIVEL_V57_SEAT_ROOT_OWNERSHIP_FIX';
 const PUBLIC_ROSTER_MARKER = 'SIVEL_V57_PUBLIC_ROSTER_DUPLICATE_FIX';
-const ACTION_DOCK_MARKER = 'SIVEL_V57_PRO_PLAYER_CONTROLS_V64';
+const ACTION_DOCK_MARKER = 'SIVEL_V57_PRO_PLAYER_CONTROLS_V65';
 
 function fail(message) {
   throw new Error(message);
@@ -189,7 +189,8 @@ function installMultiplayerActionDock(source) {
     /\n*<style id="sivel-pro-player-controls-v61">[\s\S]*?<\/style>/g,
     /\n*<style id="sivel-pro-player-controls-v62">[\s\S]*?<\/style>/g,
     /\n*<style id="sivel-pro-player-controls-v63">[\s\S]*?<\/style>/g,
-    /\n*<style id="sivel-pro-player-controls-v64">[\s\S]*?<\/style>/g
+    /\n*<style id="sivel-pro-player-controls-v64">[\s\S]*?<\/style>/g,
+    /\n*<style id="sivel-pro-player-controls-v65">[\s\S]*?<\/style>/g
   ];
   const runtimePatterns = [
     /\n*<script id="sivel-in-table-action-dock-runtime-v58">[\s\S]*?<\/script>/g,
@@ -198,7 +199,8 @@ function installMultiplayerActionDock(source) {
     /\n*<script id="sivel-pro-player-controls-runtime-v61">[\s\S]*?<\/script>/g,
     /\n*<script id="sivel-pro-player-controls-runtime-v62">[\s\S]*?<\/script>/g,
     /\n*<script id="sivel-pro-player-controls-runtime-v63">[\s\S]*?<\/script>/g,
-    /\n*<script id="sivel-pro-player-controls-runtime-v64">[\s\S]*?<\/script>/g
+    /\n*<script id="sivel-pro-player-controls-runtime-v64">[\s\S]*?<\/script>/g,
+    /\n*<script id="sivel-pro-player-controls-runtime-v65">[\s\S]*?<\/script>/g
   ];
   for (const pattern of stylePatterns.concat(runtimePatterns)) source = source.replace(pattern, '');
   source = source.replace(/\s*<\/head>/i, '\n</head>');
@@ -206,12 +208,12 @@ function installMultiplayerActionDock(source) {
 
   if (!source.includes('window.SivelGetTableState=()=>state;')) {
     const stateMatches = [...source.matchAll(/let\s+state\s*=\s*[^;]+;/g)];
-    if (stateMatches.length !== 1) fail(`V64 professional controls expected one multiplayer state declaration, found ${stateMatches.length}.`);
+    if (stateMatches.length !== 1) fail(`V65 professional controls expected one multiplayer state declaration, found ${stateMatches.length}.`);
     source = source.replace(/let\s+state\s*=\s*[^;]+;/, match => `${match}\nwindow.SivelGetTableState=()=>state;`);
   }
 
   const style = `
-<style id="sivel-pro-player-controls-v64">
+<style id="sivel-pro-player-controls-v65">
 /* ${ACTION_DOCK_MARKER} — chat-first right sidebar, top-header table metadata, bottom-right raise controls, and opponent bets beside their cards. */
 #gameScreen.sivel-action-dock-screen{min-height:0}
 #gameScreen.sivel-action-dock-screen .table-wrap{position:relative;min-height:0}
@@ -281,6 +283,9 @@ function installMultiplayerActionDock(source) {
 /* Opponent wager/blind chips sit directly left of their cards. */
 #tableStage .seat:not(.self-seat):not(.open-seat) .bet-chip.sivel-opponent-bet-left{position:absolute!important;margin:0!important;z-index:18!important;pointer-events:none!important;white-space:nowrap!important}
 
+/* Hand outcomes sit in the clear lane immediately above the community cards. */
+#tableStage .result.sivel-hand-result-banner{position:absolute!important;inset:auto!important;right:auto!important;bottom:auto!important;margin:0!important;transform:translateX(-50%)!important;z-index:97!important;max-width:min(480px,calc(100% - 40px))!important;pointer-events:none!important}
+
 .sivel-action-zone #gameStatus{display:none!important}
 .sivel-action-zone.sivel-console-waiting .action-btn{display:none!important}
 .sivel-action-zone.sivel-console-waiting #gameStatus{display:flex!important;position:absolute!important;left:50%!important;top:50%!important;right:auto!important;bottom:auto!important;transform:translate(-50%,-50%)!important;width:min(520px,calc(100% - 30px))!important;min-height:42px!important;align-items:center!important;justify-content:center!important;margin:0!important;padding:9px 13px!important;border-radius:13px!important;background:rgba(4,9,14,.82)!important;border:1px solid rgba(255,255,255,.08)!important;color:#d7e1e9!important;font-size:12px!important;line-height:1.4!important;text-align:center!important;pointer-events:none!important}
@@ -320,7 +325,7 @@ function installMultiplayerActionDock(source) {
 </style>`;
 
   const runtime = `
-<script id="sivel-pro-player-controls-runtime-v64">
+<script id="sivel-pro-player-controls-runtime-v65">
 (function(){
   'use strict';
   function initSivelActionDock(){
@@ -335,6 +340,8 @@ function installMultiplayerActionDock(source) {
     const foldBtn=document.getElementById('foldBtn');
     const callBtn=document.getElementById('callBtn');
     const raiseBtn=document.getElementById('raiseBtn');
+    const board=document.getElementById('board');
+    const resultBox=document.getElementById('resultBox');
     if(!screen||!stage||!controls||!actionRow||!status||!slider||!raiseTotal||!raiseBox||!foldBtn||!callBtn||!raiseBtn)return;
     if(document.getElementById('sivelActionDock'))return;
 
@@ -403,6 +410,10 @@ function installMultiplayerActionDock(source) {
 
     controls.classList.add('sivel-controls-relocated');
     stage.appendChild(actionZone);
+    if(resultBox){
+      resultBox.classList.add('sivel-hand-result-banner');
+      stage.appendChild(resultBox);
+    }
     let syncQueued=false;
 
     function tableState(){try{return typeof window.SivelGetTableState==='function'?window.SivelGetTableState():null}catch(_error){return null}}
@@ -422,12 +433,23 @@ function installMultiplayerActionDock(source) {
         const seatRect=seat.getBoundingClientRect(),cardsRect=cards.getBoundingClientRect(),betRect=bet.getBoundingClientRect();
         if(!seatRect.width||!cardsRect.width)return;
         const width=Math.max(38,betRect.width||0),height=Math.max(20,betRect.height||0);
-        const left=Math.round(cardsRect.left-seatRect.left-width-8);
+        const gap=3;
+        const left=Math.round(cardsRect.left-seatRect.left-width-gap);
         const top=Math.round(cardsRect.top-seatRect.top+(cardsRect.height-height)/2);
         bet.classList.add('sivel-opponent-bet-left');
         bet.style.left=left+'px';
         bet.style.top=top+'px';
       });
+    }
+
+    function positionHandResult(){
+      if(!resultBox||!board||resultBox.classList.contains('hidden'))return;
+      const stageRect=stage.getBoundingClientRect(),boardRect=board.getBoundingClientRect(),resultRect=resultBox.getBoundingClientRect();
+      if(!stageRect.width||!boardRect.width||!resultRect.width)return;
+      const left=Math.round(boardRect.left-stageRect.left+boardRect.width/2);
+      const top=Math.max(72,Math.round(boardRect.top-stageRect.top-resultRect.height-12));
+      resultBox.style.setProperty('left',left+'px','important');
+      resultBox.style.setProperty('top',top+'px','important');
     }
 
     function sync(){
@@ -446,7 +468,7 @@ function installMultiplayerActionDock(source) {
       const stepValue=betPanel&&betPanel.querySelector('#sivelSidebarBetStepValue');
       if(stepValue)stepValue.textContent=current?format(current):'—';
       if(statusMirror)statusMirror.textContent=status.textContent||'Waiting for the table.';
-      requestAnimationFrame(positionOpponentBets);
+      requestAnimationFrame(function(){positionOpponentBets();positionHandResult()});
     }
     function scheduleSync(){if(syncQueued)return;syncQueued=true;(window.requestAnimationFrame||setTimeout)(sync)}
 
@@ -490,8 +512,8 @@ function cleanServerVersion(serverSource) {
 
 function buildPackage(existing) {
   const pkg = JSON.parse(existing);
-  pkg.version = '2.2.6';
-  pkg.description = 'Sivel Poker clean V57 baseline with chat-first sidebar layout, header table metadata and opponent wager placement.';
+  pkg.version = '2.2.7';
+  pkg.description = 'Sivel Poker clean V57 baseline with chat-first interface, closer opponent wagers and protected hand-result placement.';
   pkg.sivelBaseline = 'V57';
   pkg.scripts = {
     start: 'node server.js',
@@ -524,6 +546,10 @@ function writeBaselineTest() {
   assert.ok(multiplayer.includes('sivel-top-table-meta'));
   assert.ok(multiplayer.includes('sivel-chat-priority'));
   assert.ok(multiplayer.includes('sivel-opponent-bet-left'));
+  assert.ok(multiplayer.includes('const gap=3'));
+  assert.ok(multiplayer.includes('sivel-hand-result-banner'));
+  assert.ok(multiplayer.includes('positionHandResult'));
+  assert.ok(multiplayer.includes('boardRect.top-stageRect.top-resultRect.height-12'));
   assert.ok(multiplayer.includes('rightPanel.appendChild(betPanel)'));
   assert.ok(multiplayer.includes("stage.querySelectorAll('#seats > .seat:not(.self-seat):not(.open-seat)')"));\n  assert.doesNotMatch(multiplayer, /sivel-player-console-v60/);
   assert.doesNotMatch(multiplayer, /sivel-pro-player-controls-runtime-v63/);\n  assert.match(multiplayer, /<\\/html>\\s*$/i);\n});\n\ntest('inline multiplayer scripts parse', () => {\n  const multiplayer = read('public/multiplayer.html');\n  const scripts = [...multiplayer.matchAll(/<script(?:\\s[^>]*)?>([\\s\\S]*?)<\\/script>/gi)].map(match => match[1]);\n  assert.ok(scripts.length > 0);\n  for (const [index, source] of scripts.entries()) {\n    assert.doesNotThrow(() => new vm.Script(source, { filename: 'multiplayer-inline-' + index + '.js' }));\n  }\n});\n\ntest('server contains the authoritative V57 baseline', () => {\n  const server = read('server.js');\n  assert.match(server, /clean-baseline-v57|${BASELINE_MARKER}/);\n  assert.match(server, /turnId/);\n  assert.match(server, /server/);\n});\n`;
@@ -533,7 +559,7 @@ function writeBaselineTest() {
 
 function writeBaselineNotes() {
   const notes = `# Sivel Poker V57 clean baseline\n\nV57 permanently bakes the confirmed V55 server-authority work and the V56 public-seat profile stability fix into normal source files.\n\n## Structural changes\n\n- \`npm start\` now runs only \`node server.js\`.\n- The multiplayer client is a readable file at \`public/multiplayer.html\`.\n- \`public/index.html\` loads that client template instead of storing a large base64 payload.\n- V55/V56 scripts are retained under \`legacy-patches/\` for audit and rollback only.\n- \`npm test\` includes V57 regression checks.\n\n## Preserved behavior\n\n- Server-owned turn timers, hand IDs and turn IDs.\n- Strict check, call and raise validation.\n- Public-table auto play, top-ups and all-in runouts.\n- Clickable opponent profiles.\n- One stable identity card per occupied live-table seat.\n- Visible local-player profile and chip count.\n- Ghost-seat cleanup.\n- Waiting-table seats cannot survive into active hands as duplicate profiles.
-- Public live tables do not render a second player roster beside the table.\n- Fold, check/call, raise and all-in reserve a protected center lane around the local cards, chips and profile.\n- Sit out, leave-after-hand, top-up and host controls are stacked directly beneath Hand History in the left sidebar.\n- Raise sizing is fully redesigned as presets plus minus/plus stepping in the right sidebar; the range slider is hidden.\n- The table, center logo and community board retain their approved positions.\n- The pot sits beneath the community cards with enough clearance to leave the table branding readable.\n\n## Next development rule\n\nEdit \`server.js\`, \`public/index.html\` and \`public/multiplayer.html\` directly. Do not add another startup patch script.\n`;
+- Public live tables do not render a second player roster beside the table.\n- Fold, check/call, raise and all-in reserve a protected center lane around the local cards, chips and profile.\n- Sit out, leave-after-hand, top-up and host controls are stacked directly beneath Hand History in the left sidebar.\n- Raise sizing is fully redesigned as presets plus minus/plus stepping in the right sidebar; the range slider is hidden.\n- The table, center logo and community board retain their approved positions.\n- The pot sits beneath the community cards with enough clearance to leave the table branding readable.\n- Opponent wager and blind chips sit three pixels from the left edge of their cards without overlapping them.\n- Hand winners and fold results appear in the protected lane immediately above the community cards.\n\n## Next development rule\n\nEdit \`server.js\`, \`public/index.html\` and \`public/multiplayer.html\` directly. Do not add another startup patch script.\n`;
   writeAtomic(path.join(ROOT, 'V57_BASELINE.md'), notes);
 }
 
@@ -567,7 +593,7 @@ function main() {
   requireFile(PACKAGE_PATH);
 
   if (read(INDEX_PATH).includes(BASELINE_MARKER) && fs.existsSync(MULTIPLAYER_PATH)) {
-    console.log('V57 clean baseline is already installed; applying the V64 chat-first professional controls and verifying them now.');
+    console.log('V57 clean baseline is already installed; applying the V65 hand-result and wager-spacing polish and verifying them now.');
     const existingMultiplayer = read(MULTIPLAYER_PATH);
     const upgradedMultiplayer = installMultiplayerActionDock(existingMultiplayer);
     if (upgradedMultiplayer !== existingMultiplayer) writeAtomic(MULTIPLAYER_PATH, upgradedMultiplayer);
