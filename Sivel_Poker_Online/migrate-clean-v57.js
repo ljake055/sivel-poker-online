@@ -804,7 +804,7 @@ function installSoloTableUpgrade(source) {
       resultBox.style.setProperty('top',Math.max(72,Math.round(boardRect.top-stageRect.top-resultRect.height-12))+'px','important');
     }
     function sync(){
-      syncQueued=false;placeSoloStats();enforceSoloMetadataVisibility();
+      syncQueued=false;screen.classList.add('sivel-solo-professional');placeSoloStats();enforceSoloMetadataVisibility();
       const current=number(slider.value);const canRaise=!raiseBtn.disabled&&number(slider.max)>0;
       sizeButtons.forEach(function(button){button.disabled=!canRaise});stepButtons.forEach(function(button){button.disabled=!canRaise});allIn.disabled=!canRaise;
       const shown=current?format(current):'—';valueLabel.textContent=shown;stepLabel.textContent=shown;
