@@ -1,5 +1,7 @@
 'use strict';
 
+// SIVEL_SERVER_AUTHORITY_V55 — server owns deadlines, actions, cards, pots, and outcomes.
+
 const http = require('http');
 const fs = require('fs');
 const path = require('path');
@@ -447,6 +449,24 @@ function publicTableSummary(room) {
   };
 }
 
+function movePublicTableToWaiting(room) {
+  if (!room || !room.game) return;
+  room.game.handOver = true;
+  room.game.tableOver = false;
+  room.game.currentActor = null;
+  room.game.phase = 'waiting';
+  room.game.board = [];
+  room.game.street = 'preflop';
+  room.game.pot = 0;
+  room.game.reveal = false;
+  room.game.result = null;
+  const seatedCount = seatedPlayers(room).length;
+  room.game.status = seatedCount >= 2
+    ? 'Waiting for another player to top up or return.'
+    : 'Waiting for another player to take a seat.';
+  broadcast(room);
+}
+
 function schedulePublicPlay(room, delay = PUBLIC_NEXT_HAND_MS) {
   if (!room || !room.isPublic) return;
   clearPublicNextTimer(room);
@@ -459,23 +479,34 @@ function schedulePublicPlay(room, delay = PUBLIC_NEXT_HAND_MS) {
     broadcast(room);
     return;
   }
-  const enoughPlayers = room.stage === 'lobby' ? seatedPlayers(room).filter(player => !player.sittingOut).length >= 2 : activeIndices(room).length >= 2;
+  const enoughPlayers = room.stage === 'lobby'
+    ? seatedPlayers(room).filter(player => !player.sittingOut).length >= 2
+    : activeIndices(room).length >= 2;
+  const preserveCompletedResult = !!(room.game && room.game.handOver && room.game.phase === 'complete' && room.game.result);
+  const requestedDelay = Math.max(250, Number(delay) || PUBLIC_NEXT_HAND_MS);
+  const displayDelay = preserveCompletedResult ? Math.max(PUBLIC_NEXT_HAND_MS, requestedDelay) : requestedDelay;
+
   if (!enoughPlayers) {
-    if (room.game) {
-      room.game.handOver = true;
-      room.game.tableOver = false;
-      room.game.currentActor = null;
-      room.game.phase = 'waiting';
-      room.game.board = [];
-      room.game.street = 'preflop';
-      room.game.pot = 0;
-      room.game.reveal = false;
-      room.game.result = null;
-      room.game.status = 'Waiting for another player to take a seat.';
+    if (!preserveCompletedResult) {
+      movePublicTableToWaiting(room);
+      return;
     }
-    broadcast(room);
+    room.publicNextTimer = setTimeout(() => {
+      room.publicNextTimer = null;
+      try {
+        if (!room.game || !room.game.handOver) return;
+        compactPublicPlayers(room);
+        if (activeIndices(room).length >= 2) startHand(room);
+        else movePublicTableToWaiting(room);
+      } catch (err) {
+        console.error(`Unable to settle public table display ${room.code}:`, err);
+        movePublicTableToWaiting(room);
+      }
+    }, displayDelay);
+    if (room.publicNextTimer.unref) room.publicNextTimer.unref();
     return;
   }
+
   room.publicNextTimer = setTimeout(() => {
     room.publicNextTimer = null;
     try {
@@ -487,8 +518,42 @@ function schedulePublicPlay(room, delay = PUBLIC_NEXT_HAND_MS) {
       if (room.game) room.game.status = 'The table is waiting to restart.';
       broadcast(room);
     }
-  }, Math.max(250, Number(delay) || PUBLIC_NEXT_HAND_MS));
+  }, displayDelay);
   if (room.publicNextTimer.unref) room.publicNextTimer.unref();
+}
+
+// SIVEL_V57_PUBLIC_FINAL_POLISH_V71 — private rooms now preserve results briefly and deal the next hand automatically.
+function schedulePrivatePlay(room, delay = PUBLIC_NEXT_HAND_MS) {
+  if (!room || room.isPublic) return;
+  clearPublicNextTimer(room);
+  if (!room.game || room.game.tableOver || room.stage !== 'playing') return;
+  const preserveCompletedResult = !!(room.game.handOver && room.game.phase === 'complete' && room.game.result);
+  const requestedDelay = Math.max(250, Number(delay) || PUBLIC_NEXT_HAND_MS);
+  const displayDelay = preserveCompletedResult ? Math.max(PUBLIC_NEXT_HAND_MS, requestedDelay) : requestedDelay;
+  room.publicNextTimer = setTimeout(() => {
+    room.publicNextTimer = null;
+    try {
+      if (!room.game || !room.game.handOver || room.game.tableOver || room.stage !== 'playing') return;
+      if (activeIndices(room).length >= 2) startHand(room);
+      else {
+        room.game.phase = 'waiting';
+        room.game.currentActor = null;
+        room.game.status = 'Waiting for another seated player to return.';
+        broadcast(room);
+      }
+    } catch (err) {
+      console.error('Unable to continue private table ' + room.code + ':', err);
+      if (room.game) room.game.status = 'The table is waiting to restart.';
+      broadcast(room);
+    }
+  }, displayDelay);
+  if (room.publicNextTimer.unref) room.publicNextTimer.unref();
+}
+
+function scheduleRoomPlay(room, delay = PUBLIC_NEXT_HAND_MS) {
+  if (!room) return;
+  if (room.isPublic) schedulePublicPlay(room, delay);
+  else schedulePrivatePlay(room, delay);
 }
 
 function resetPublicRoom(room) {
@@ -646,31 +711,40 @@ function postBlind(room, index, amount, label) {
 
 function clearTurnTimer(room) {
   if (room.game && room.game.turnTimer) clearTimeout(room.game.turnTimer);
-  if (room.game) room.game.turnTimer = null;
+  if (room.game) {
+    room.game.turnTimer = null;
+    room.game.turnDeadline = 0;
+  }
+}
+
+function expireTurn(room, expected = {}) {
+  const game = room.game;
+  if (!game || game.handOver || game.phase !== 'betting' || game.currentActor == null) return false;
+  if (expected.gameRef && game !== expected.gameRef) return false;
+  if (expected.handId != null && Number(game.handId) !== Number(expected.handId)) return false;
+  if (expected.turnId != null && Number(game.turnId) !== Number(expected.turnId)) return false;
+  if (expected.actor != null && Number(game.currentActor) !== Number(expected.actor)) return false;
+  const actor = game.currentActor;
+  const player = room.players[actor];
+  if (!player || !player.inHand || player.folded || player.allIn) return false;
+  clearTurnTimer(room);
+  player.folded = true;
+  player.acted = true;
+  log(room, `${player.name} folds after the turn timer expires.`);
+  afterAction(room, actor);
+  return true;
 }
 
 function armTurnTimer(room) {
   clearTurnTimer(room);
   const game = room.game;
   if (!game || game.handOver || game.phase !== 'betting' || game.currentActor == null) return;
+  game.turnId = Number(game.turnId || 0) + 1;
   game.turnDeadline = Date.now() + TURN_MS;
-  const actor = game.currentActor;
-  const handId = game.handId;
-  const gameRef = game;
-  game.turnTimer = setTimeout(() => {
-    if (room.game !== gameRef || !room.game || room.game.handOver || room.game.phase !== 'betting' || room.game.handId !== handId || room.game.currentActor !== actor) return;
-    const owed = amountToCall(room, actor);
-    const player = room.players[actor];
-    if (owed === 0) {
-      player.acted = true;
-      log(room, `${player.name} checks after the turn timer expires.`);
-    } else {
-      player.folded = true;
-      player.acted = true;
-      log(room, `${player.name} folds after the turn timer expires.`);
-    }
-    afterAction(room, actor);
-  }, TURN_MS + 25);
+  const expected = { gameRef: game, actor: game.currentActor, handId: game.handId, turnId: game.turnId };
+  game.turnTimer = setTimeout(() => expireTurn(room, expected), Math.max(0, game.turnDeadline - Date.now() + 25));
+  if (game.turnTimer.unref) game.turnTimer.unref();
+  broadcast(room);
 }
 
 function startTable(room) {
@@ -707,6 +781,7 @@ function startTable(room) {
     status: 'The table is ready.',
     result: null,
     turnDeadline: 0,
+    turnId: 0,
     turnTimer: null
   };
   log(room, `The ${room.players.length}-player table started.`);
@@ -772,6 +847,7 @@ function startHand(room) {
   game.phase = 'betting';
   game.result = null;
   game.turnDeadline = 0;
+  game.turnId = 0;
 
   for (const p of room.players) {
     p.inHand = p.chips > 0 && !p.cashedOut && !p.sittingOut;
@@ -797,7 +873,6 @@ function startHand(room) {
   game.currentActor = nextIndex(room, game.bbIndex, p => p.inHand && !p.folded && !p.allIn);
   game.status = `Hand ${game.handNo} · ${room.players[game.currentActor].name} to act`;
   log(room, `Hand ${game.handNo} begins.`);
-  broadcast(room);
   if (actionable(room).length < 2) runoutAndShowdown(room, handId);
   else armTurnTimer(room);
 }
@@ -822,21 +897,34 @@ function action(room, playerToken, payload) {
   if (p.cashOutPending || p.cashedOut) throw new Error('This seat is cashing out.');
   const type = String(payload.type || '').toLowerCase();
   const owed = amountToCall(room, index);
+  if (!Number.isInteger(Number(payload.handId)) || Number(payload.handId) !== Number(game.handId)) throw new Error('That action belongs to an older hand.');
+  if (!Number.isInteger(Number(payload.turnId)) || Number(payload.turnId) !== Number(game.turnId)) throw new Error('That turn has already advanced.');
+  if (!game.turnDeadline || Date.now() >= Number(game.turnDeadline)) {
+    expireTurn(room, { gameRef: game, actor: index, handId: game.handId, turnId: game.turnId });
+    throw new Error('Time expired. Your hand was folded by the server.');
+  }
   clearTurnTimer(room);
 
   if (type === 'fold') {
     p.folded = true;
     p.acted = true;
     log(room, `${p.name} folds.`);
-  } else if (type === 'call' || type === 'check') {
+  } else if (type === 'check') {
+    if (owed !== 0) throw new Error('You cannot check while facing a bet.');
+    p.acted = true;
+    log(room, `${p.name} checks.`);
+  } else if (type === 'call') {
+    if (owed <= 0) throw new Error('There is no bet to call.');
     const paid = commit(room, index, owed);
     p.acted = true;
-    log(room, paid ? `${p.name} calls ${paid}${p.allIn ? ' and is all-in' : ''}.` : `${p.name} checks.`);
+    log(room, `${p.name} calls ${paid}${p.allIn ? ' and is all-in' : ''}.`);
   } else if (type === 'raise') {
     const bounds = legalRaiseBounds(room, index);
     if (!bounds.canRaise) throw new Error('A raise is not available.');
-    const requested = clampInt(payload.total, bounds.minTotal, bounds.maxTotal, bounds.minTotal);
-    const target = Math.max(bounds.minTotal, Math.min(requested, bounds.maxTotal));
+    const requested = Number(payload.total);
+    if (!Number.isInteger(requested)) throw new Error('Enter a valid whole-chip raise total.');
+    if (requested < bounds.minTotal || requested > bounds.maxTotal) throw new Error(`Raise total must be between ${bounds.minTotal} and ${bounds.maxTotal}.`);
+    const target = requested;
     const oldBet = game.currentBet;
     commit(room, index, target - p.streetBet);
     game.currentBet = Math.max(game.currentBet, p.streetBet);
@@ -859,7 +947,8 @@ function action(room, playerToken, payload) {
 function afterAction(room, index) {
   const game = room.game;
   if (contenders(room).length === 1) {
-    awardUncontested(room, contenders(room)[0]);
+    const foldedPlayer = room.players[index] && room.players[index].folded ? room.players[index] : null;
+    awardUncontested(room, contenders(room)[0], foldedPlayer);
     return;
   }
   if (roundComplete(room)) {
@@ -873,7 +962,6 @@ function afterAction(room, index) {
   }
   game.currentActor = next;
   game.status = `${room.players[next].name} to act`;
-  broadcast(room);
   armTurnTimer(room);
 }
 
@@ -905,7 +993,6 @@ function finishBettingRound(room) {
   }
   game.phase = 'betting';
   game.status = `${capitalize(game.street)} · ${room.players[game.currentActor].name} to act`;
-  broadcast(room);
   armTurnTimer(room);
 }
 
@@ -929,13 +1016,47 @@ function advanceStreet(room) {
 function runoutAndShowdown(room, expectedHandId = room.game && room.game.handId) {
   const game = room.game;
   if (!game || game.handOver || game.handId !== expectedHandId || !['betting', 'resolving', 'runout'].includes(game.phase)) return;
+  if (game.runoutPending && Number(game.runoutHandId) === Number(expectedHandId)) return;
+  if (game.runoutTimer) clearTimeout(game.runoutTimer);
   clearTurnTimer(room);
   game.phase = 'runout';
-  while (game.street !== 'river') advanceStreet(room);
-  showdown(room, expectedHandId);
+  game.currentActor = null;
+  game.turnDeadline = 0;
+  game.reveal = true;
+  game.runoutPending = true;
+  game.runoutHandId = expectedHandId;
+  game.status = 'All-in · hole cards revealed.';
+  // SIVEL_ALL_IN_SHOWDOWN_FIX — reveal every all-in hand and deal the remaining board in visible stages.
+  broadcast(room);
+
+  const continueRunout = () => {
+    const current = room.game;
+    if (current !== game || current.handOver || current.handId !== expectedHandId || current.phase !== 'runout') return;
+    if (current.street !== 'river') {
+      advanceStreet(room);
+      current.status = `All-in · ${capitalize(current.street)} dealt.`;
+      broadcast(room);
+      current.runoutTimer = setTimeout(continueRunout, 700);
+      if (current.runoutTimer.unref) current.runoutTimer.unref();
+      return;
+    }
+    current.status = 'All-in · determining the winner…';
+    broadcast(room);
+    current.runoutTimer = setTimeout(() => {
+      current.runoutTimer = null;
+      if (room.game !== game || game.handOver || game.handId !== expectedHandId || game.phase !== 'runout') return;
+      game.runoutPending = false;
+      game.runoutHandId = null;
+      showdown(room, expectedHandId);
+    }, 850);
+    if (current.runoutTimer.unref) current.runoutTimer.unref();
+  };
+
+  game.runoutTimer = setTimeout(continueRunout, 550);
+  if (game.runoutTimer.unref) game.runoutTimer.unref();
 }
 
-function awardUncontested(room, winner) {
+function awardUncontested(room, winner, foldedPlayer = null) {
   const game = room.game;
   winner.chips += game.pot;
   const amount = game.pot;
@@ -943,8 +1064,18 @@ function awardUncontested(room, winner) {
   game.handOver = true;
   game.phase = 'complete';
   game.currentActor = null;
-  game.status = `${winner.name} wins ${amount} uncontested.`;
-  game.result = { handId: game.handId, handNo: game.handNo, title: `${winner.name} wins`, detail: `${amount} chips · uncontested`, winners: [winner.seat] };
+  game.turnDeadline = 0;
+  const foldedName = foldedPlayer ? foldedPlayer.name : 'Opponent';
+  game.status = `${foldedName} folded.`;
+  game.result = {
+    handId: game.handId,
+    handNo: game.handNo,
+    reason: 'fold',
+    foldedSeat: foldedPlayer ? foldedPlayer.seat : null,
+    title: `${foldedName} folded`,
+    detail: `${winner.name} receives ${amount} chips`,
+    winners: [winner.seat]
+  };
   log(room, game.status);
   finishHand(room);
 }
@@ -1034,7 +1165,7 @@ function finishHand(room) {
         room.game.phase = 'waiting';
         room.game.status = 'Waiting for another seated player to return.';
         broadcast(room);
-      }
+      } else schedulePrivatePlay(room, 900);
     }, 350);
     return;
   }
@@ -1054,8 +1185,9 @@ function finishHand(room) {
     game.status += ' · Waiting for another seated player to return.';
     broadcast(room);
   } else {
-    game.status += ' · Host may deal the next hand.';
+    game.status += ' · Next hand deals automatically.';
     broadcast(room);
+    schedulePrivatePlay(room);
   }
 }
 
@@ -1296,7 +1428,7 @@ async function leaveRoom(room, playerToken) {
       const remaining = contenders(room);
       if (remaining.length === 1) {
         clearTurnTimer(room);
-        awardUncontested(room, remaining[0]);
+        awardUncontested(room, remaining[0], player);
       } else if (game.currentActor === player.seat) {
         clearTurnTimer(room);
         afterAction(room, player.seat);
@@ -1327,9 +1459,15 @@ async function topUpSeat(room, player, requestedAmount) {
   player.chips += amount;
   player.reservedBuyIn += amount;
   player.walletBalance = Number(result.account.bankroll);
+  player.waitingForNextHand = !player.sittingOut;
+  player.allIn = false;
+  player.folded = true;
+  player.inHand = false;
   log(room, `${player.name} tops up ${amount} chips.`);
   systemChat(room, `${player.name} topped up to ${player.chips.toLocaleString()} chips.`);
+  // SIVEL_BUST_TOP_UP_SERVER_FIX — a busted public seat can refill and automatically re-enter play.
   broadcast(room);
+  if (room.game && room.game.handOver) scheduleRoomPlay(room, PUBLIC_NEXT_HAND_MS);
   return result;
 }
 
@@ -1348,7 +1486,7 @@ async function handleTableControl(room, player, control, body) {
       systemChat(room, `${player.name} is sitting out.`);
     }
     broadcast(room);
-    if (room.isPublic && game && game.handOver) schedulePublicPlay(room, 700);
+    if (game && game.handOver) scheduleRoomPlay(room, 700);
     return { ok: true };
   }
   if (control === 'return') {
@@ -1357,7 +1495,7 @@ async function handleTableControl(room, player, control, body) {
     player.waitingForNextHand = true;
     systemChat(room, `${player.name} returned to the table.`);
     broadcast(room);
-    if (room.isPublic && game && game.handOver) schedulePublicPlay(room, 700);
+    if (game && game.handOver) scheduleRoomPlay(room, 700);
     return { ok: true };
   }
   if (control === 'leave-after-hand') {
@@ -1383,7 +1521,7 @@ function publicState(room, viewerToken) {
   const viewerIndex = room.players.findIndex(p => p.token === viewerToken);
   const game = room.game;
   const players = room.players.map((p, index) => {
-    const revealHole = game && game.handOver && game.phase === 'complete' && game.reveal && p.inHand && !p.folded;
+    const revealHole = game && game.reveal && p.inHand && !p.folded && ((game.handOver && game.phase === 'complete') || game.phase === 'runout');
     const self = index === viewerIndex;
     return {
       seat: index,
@@ -1446,7 +1584,8 @@ function publicState(room, viewerToken) {
       tableOver: game.tableOver,
       status: game.status,
       result: game.handOver && game.phase === 'complete' && game.result && Number(game.result.handId) === Number(game.handId) && (game.result.tableOver || Number(game.result.handNo) === Number(game.handNo)) ? game.result : null,
-      turnDeadline: game.turnDeadline
+      turnDeadline: game.turnDeadline,
+      turnId: Number(game.turnId || 0)
     } : null,
     legal,
     tableControls: viewerIndex >= 0 ? (() => {
@@ -1604,7 +1743,7 @@ async function handleApi(req, res, pathname, url) {
     }
     if (req.method === 'GET' && pathname === '/api/health') {
       const database = await accounts.health();
-      return json(res, 200, { ok: true, version: 'admin-command-center-1', database: database.ok, rooms: rooms.size, publicTables: PUBLIC_TABLE_DEFINITIONS.length, now: Date.now() });
+      return json(res, 200, { ok: true, version: 'clean-baseline-v57', baseline: 'V57', authority: 'server', database: database.ok, rooms: rooms.size, publicTables: PUBLIC_TABLE_DEFINITIONS.length, now: Date.now() });
     }
     if (req.method === 'GET' && pathname === '/api/public-tables') {
       ensurePublicTables();
@@ -2040,6 +2179,8 @@ async function handleApi(req, res, pathname, url) {
     if (!room) throw new Error('Room not found.');
     const player = getPlayer(room, body.token);
     if (!player) throw new Error('Player session not found. Rejoin the room.');
+    const tableAccount = await accounts.requireAuth(authTokenFrom(req, body));
+    if (Number(tableAccount.id) !== Number(player.userId)) throw new Error('That table seat belongs to a different account.');
     touch(room, player);
 
     if (pathname === '/api/table-control') {

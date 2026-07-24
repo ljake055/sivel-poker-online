@@ -1,16 +1,18 @@
 {
   "name": "sivel-poker-online",
-  "version": "2.0.0",
+  "version": "2.3.3",
   "private": true,
-  "description": "Sivel Poker with persistent accounts and server-authoritative multiplayer poker.",
+  "description": "Sivel Poker clean V57 baseline with exact public top-ups, mirrored table actions, and automatic private hands.",
   "scripts": {
-    "start": "node apply-server-authority-v55.js && node apply-live-seat-profile-fix-v56.js && node server.js",
-    "test": "node --check apply-server-authority-v55.js && node --check apply-live-seat-profile-fix-v56.js && node apply-server-authority-v55.js && node apply-live-seat-profile-fix-v56.js && node --check server.js && node --check account-store.js"
+    "start": "node server.js",
+    "test": "node --check server.js && node --check account-store.js && node --test tests/v57-baseline.test.js",
+    "verify:v57": "node --test tests/v57-baseline.test.js"
   },
   "engines": {
     "node": ">=20"
   },
   "dependencies": {
     "pg": "^8.22.0"
-  }
+  },
+  "sivelBaseline": "V57"
 }
