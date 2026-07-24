@@ -19,6 +19,7 @@ const SEAT_OWNERSHIP_MARKER = 'SIVEL_V57_SEAT_ROOT_OWNERSHIP_FIX';
 const PUBLIC_ROSTER_MARKER = 'SIVEL_V57_PUBLIC_ROSTER_DUPLICATE_FIX';
 const ACTION_DOCK_MARKER = 'SIVEL_V57_PRO_PLAYER_CONTROLS_V67';
 const SOLO_TABLE_MARKER = 'SIVEL_V57_SOLO_PRO_TABLE_V70';
+const PUBLIC_FINAL_MARKER = 'SIVEL_V57_PUBLIC_FINAL_POLISH_V71';
 
 function fail(message) {
   throw new Error(message);
@@ -140,6 +141,14 @@ function replaceExactlyOnce(source, before, after, label) {
   return source.slice(0, first) + after + source.slice(first + before.length);
 }
 
+function replaceUnique(source, before, after, label) {
+  const first = source.indexOf(before);
+  const last = source.lastIndexOf(before);
+  if (first < 0) fail(`V71 public-table polish could not find ${label}.`);
+  if (first !== last) fail(`V71 public-table polish found multiple copies of ${label}.`);
+  return source.slice(0, first) + after + source.slice(first + before.length);
+}
+
 function fixMultiplayerSeatOwnership(source) {
   if (source.includes(SEAT_OWNERSHIP_MARKER)) return source;
 
@@ -210,6 +219,17 @@ function installMultiplayerActionDock(source) {
   for (const pattern of stylePatterns.concat(runtimePatterns)) source = source.replace(pattern, '');
   // Remove every legacy local-profile suffix, regardless of which older renderer produced it.
   source = source.split(' · YOU').join('');
+
+
+  const oldTopUpStep = "slider.step=Math.max(1,Number(state.options.smallBlind)||1);slider.value=max;";
+  const exactTopUpStep = "slider.step=1;slider.value=max;";
+  if (source.includes(oldTopUpStep)) source = replaceUnique(source, oldTopUpStep, exactTopUpStep, 'public top-up slider step');
+  else if (!source.includes(exactTopUpStep)) fail('V71 public-table polish could not verify exact top-up slider support.');
+
+  const oldNextHandVisibility = "$('nextHandBtn').classList.toggle('hidden',state.isPublic||!(state.isHost&&g.handOver&&!g.tableOver));";
+  const hiddenNextHandVisibility = "$('nextHandBtn').classList.add('hidden');";
+  if (source.includes(oldNextHandVisibility)) source = replaceUnique(source, oldNextHandVisibility, hiddenNextHandVisibility, 'private next-hand visibility');
+  else if (!source.includes(hiddenNextHandVisibility)) fail('V71 public-table polish could not verify hidden multiplayer next-hand controls.');
   source = source.replace(/\s*<\/head>/i, '\n</head>');
   source = source.replace(/\s*<\/body>/i, '\n</body>');
 
@@ -222,9 +242,11 @@ function installMultiplayerActionDock(source) {
   const style = `
 <style id="sivel-pro-player-controls-v67">
 /* ${ACTION_DOCK_MARKER} — chat-first right sidebar, top-header table metadata, bottom-right raise controls, and opponent bets beside their cards. */
+/* ${PUBLIC_FINAL_MARKER} — exact public top-ups, mirrored actions, and automatic private hands. */
 #gameScreen.sivel-action-dock-screen{min-height:0}
 #gameScreen.sivel-action-dock-screen .table-wrap{position:relative;min-height:0}
 .controls.sivel-controls-relocated{display:none!important}
+#nextHandBtn{display:none!important}
 
 /* Preserve the approved table, board, logo, pot and local action geometry. */
 #tableStage.sivel-action-console-active .poker-table.sivel-casino-table{left:5.8%!important;right:5.8%!important;top:20.5%!important;bottom:10.5%!important}
@@ -241,7 +263,7 @@ function installMultiplayerActionDock(source) {
 .sivel-action-zone{position:absolute;inset:0;z-index:90;pointer-events:none}
 .sivel-action-zone .action-btn{position:absolute!important;z-index:4;min-width:0!important;padding:6px 10px!important;pointer-events:auto!important;font-size:10px!important;font-weight:950!important;letter-spacing:.025em!important;box-shadow:0 9px 20px rgba(0,0,0,.48),inset 0 1px 0 rgba(255,255,255,.13)!important;transition:transform .14s ease,filter .14s ease,border-color .14s ease!important}
 .sivel-action-zone #foldBtn{left:max(14px,calc(50% - 410px));bottom:22px;width:106px!important;height:42px!important;border-radius:20px 11px 24px 24px!important;background:linear-gradient(180deg,#51232d,#281017)!important;border:1px solid #884452!important;color:#ffd0d6!important}
-.sivel-action-zone #callBtn{left:max(126px,calc(50% - 292px));bottom:46px;width:122px!important;height:47px!important;border-radius:26px 16px 16px 26px!important;background:linear-gradient(180deg,#205840,#0c2a1f)!important;border:1px solid #3d936b!important;color:#cbffe0!important}
+.sivel-action-zone #callBtn{left:max(126px,calc(50% - 292px));bottom:46px;width:136px!important;height:47px!important;border-radius:26px 16px 16px 26px!important;background:linear-gradient(180deg,#205840,#0c2a1f)!important;border:1px solid #3d936b!important;color:#cbffe0!important}
 .sivel-action-zone #raiseBtn{right:max(126px,calc(50% - 292px));bottom:46px;width:136px!important;height:47px!important;border-radius:16px 26px 26px 16px!important;background:linear-gradient(180deg,#f1d88d,#c58a2d 65%,#965f1b)!important;border:1px solid #f0ce77!important;color:#221503!important}
 .sivel-action-zone .sivel-all-in{right:max(14px,calc(50% - 410px));bottom:22px;width:106px!important;height:42px!important;border-radius:11px 20px 24px 24px!important;background:linear-gradient(180deg,#dc622e,#761911 72%,#470d09)!important;border:1px solid #ee9548!important;color:#fff1da!important}
 .sivel-action-zone #foldBtn:hover:not(:disabled),.sivel-action-zone #callBtn:hover:not(:disabled),.sivel-action-zone #raiseBtn:hover:not(:disabled),.sivel-action-zone .sivel-all-in:hover:not(:disabled){transform:translateY(-3px)!important;filter:brightness(1.08)!important}
@@ -811,6 +833,95 @@ function installSoloTableUpgrade(source) {
   return source;
 }
 
+
+function installServerTableFlowUpgrade(source) {
+  if (source.includes(PUBLIC_FINAL_MARKER)) return source;
+
+  const scheduleAnchor = 'function resetPublicRoom(room) {';
+  const privateScheduler = `// ${PUBLIC_FINAL_MARKER} — private rooms now preserve results briefly and deal the next hand automatically.
+function schedulePrivatePlay(room, delay = PUBLIC_NEXT_HAND_MS) {
+  if (!room || room.isPublic) return;
+  clearPublicNextTimer(room);
+  if (!room.game || room.game.tableOver || room.stage !== 'playing') return;
+  const preserveCompletedResult = !!(room.game.handOver && room.game.phase === 'complete' && room.game.result);
+  const requestedDelay = Math.max(250, Number(delay) || PUBLIC_NEXT_HAND_MS);
+  const displayDelay = preserveCompletedResult ? Math.max(PUBLIC_NEXT_HAND_MS, requestedDelay) : requestedDelay;
+  room.publicNextTimer = setTimeout(() => {
+    room.publicNextTimer = null;
+    try {
+      if (!room.game || !room.game.handOver || room.game.tableOver || room.stage !== 'playing') return;
+      if (activeIndices(room).length >= 2) startHand(room);
+      else {
+        room.game.phase = 'waiting';
+        room.game.currentActor = null;
+        room.game.status = 'Waiting for another seated player to return.';
+        broadcast(room);
+      }
+    } catch (err) {
+      console.error('Unable to continue private table ' + room.code + ':', err);
+      if (room.game) room.game.status = 'The table is waiting to restart.';
+      broadcast(room);
+    }
+  }, displayDelay);
+  if (room.publicNextTimer.unref) room.publicNextTimer.unref();
+}
+
+function scheduleRoomPlay(room, delay = PUBLIC_NEXT_HAND_MS) {
+  if (!room) return;
+  if (room.isPublic) schedulePublicPlay(room, delay);
+  else schedulePrivatePlay(room, delay);
+}
+
+`;
+  if (!source.includes(scheduleAnchor)) fail('V71 public-table polish could not find the server scheduler insertion point.');
+  source = source.replace(scheduleAnchor, privateScheduler + scheduleAnchor);
+
+  source = replaceUnique(
+    source,
+    `      if (room.isPublic) schedulePublicPlay(room, 900);
+      else if (room.game && !room.game.tableOver && activeIndices(room).length < 2) {
+        room.game.phase = 'waiting';
+        room.game.status = 'Waiting for another seated player to return.';
+        broadcast(room);
+      }`,
+    `      if (room.isPublic) schedulePublicPlay(room, 900);
+      else if (room.game && !room.game.tableOver && activeIndices(room).length < 2) {
+        room.game.phase = 'waiting';
+        room.game.status = 'Waiting for another seated player to return.';
+        broadcast(room);
+      } else schedulePrivatePlay(room, 900);`,
+    'scheduled-leave private continuation'
+  );
+
+  source = replaceUnique(
+    source,
+    `  } else {
+    game.status += ' · Host may deal the next hand.';
+    broadcast(room);
+  }`,
+    `  } else {
+    game.status += ' · Next hand deals automatically.';
+    broadcast(room);
+    schedulePrivatePlay(room);
+  }`,
+    'private hand completion flow'
+  );
+
+  source = replaceUnique(
+    source,
+    `  if (room.isPublic && room.game && room.game.handOver) schedulePublicPlay(room, PUBLIC_NEXT_HAND_MS);`,
+    `  if (room.game && room.game.handOver) scheduleRoomPlay(room, PUBLIC_NEXT_HAND_MS);`,
+    'top-up hand continuation'
+  );
+
+  const controlResume = `    if (room.isPublic && game && game.handOver) schedulePublicPlay(room, 700);`;
+  const controlResumeReplacement = `    if (game && game.handOver) scheduleRoomPlay(room, 700);`;
+  const occurrences = source.split(controlResume).length - 1;
+  if (occurrences !== 2) fail(`V71 public-table polish expected two table-control resume paths, found ${occurrences}.`);
+  source = source.split(controlResume).join(controlResumeReplacement);
+  return source;
+}
+
 function cleanServerVersion(serverSource) {
   let result = serverSource;
   result = result.replace(
@@ -825,8 +936,8 @@ function cleanServerVersion(serverSource) {
 
 function buildPackage(existing) {
   const pkg = JSON.parse(existing);
-  pkg.version = '2.3.2';
-  pkg.description = 'Sivel Poker clean V57 baseline with persistent solo metadata cleanup, card-attached opponent wagers, and dealer-safe actions.';
+  pkg.version = '2.3.3';
+  pkg.description = 'Sivel Poker clean V57 baseline with exact public top-ups, mirrored table actions, and automatic private hands.';
   pkg.sivelBaseline = 'V57';
   pkg.scripts = {
     start: 'node server.js',
@@ -852,7 +963,11 @@ function writeBaselineTest() {
   const test = `'use strict';\n\nconst test = require('node:test');\nconst assert = require('node:assert/strict');\nconst fs = require('node:fs');\nconst path = require('node:path');\nconst vm = require('node:vm');\n\nconst ROOT = path.resolve(__dirname, '..');\nconst read = relative => fs.readFileSync(path.join(ROOT, relative), 'utf8');\n\ntest('V57 starts the server without runtime patch scripts', () => {\n  const pkg = JSON.parse(read('package.json'));\n  assert.equal(pkg.sivelBaseline, 'V57');\n  assert.equal(pkg.scripts.start, 'node server.js');\n  assert.doesNotMatch(pkg.scripts.start, /apply-|patch/i);\n});\n\ntest('multiplayer client is external and readable', () => {\n  const index = read('public/index.html');\n  const multiplayer = read('public/multiplayer.html');\n  assert.match(index, /${BASELINE_MARKER}/);\n  assert.match(index, /multiplayerTemplatePromise/);\n  assert.doesNotMatch(index, /const encoded='/);\n  assert.doesNotMatch(index, /atob\\(encoded\\)/);\n  assert.match(multiplayer, /${MULTIPLAYER_MARKER}/);\n  assert.match(multiplayer, /SIVEL_SERVER_AUTHORITY_CLIENT_V55/);\n  assert.match(multiplayer, /SIVEL_PUBLIC_SEAT_PROFILE_STABILITY_V56/);\n  assert.match(multiplayer, /SIVEL_V57_SEAT_ROOT_OWNERSHIP_FIX/);\n  assert.ok(multiplayer.includes('!ownedRoots.has(node)'));\n  assert.ok(multiplayer.includes('sivelStableSeatNodes.clear()'));\n  assert.ok(multiplayer.includes('data-player-index=\"\${originalIndex}\"'));
   assert.match(multiplayer, /SIVEL_V57_PUBLIC_ROSTER_DUPLICATE_FIX/);
   assert.ok(multiplayer.includes("$('gamePlayers').innerHTML=state.isPublic?'':activePlayerRows+publicSideInviteRows(activeOpenSeats)"));
-  assert.ok(multiplayer.includes("classList.toggle('sivel-public-live',!!(state&&state.isPublic))"));\n  assert.match(multiplayer, /${ACTION_DOCK_MARKER}/);\n  assert.ok(multiplayer.includes("actionZone.id='sivelActionDock'"));\n  assert.ok(multiplayer.includes('sivelAllInBtn'));\n  assert.ok(multiplayer.includes('data-size=\"half\"'));\n  assert.ok(multiplayer.includes('sivel-action-zone'));\n  assert.ok(multiplayer.includes('sivel-sidebar-bet-control'));\n  assert.ok(multiplayer.includes('sivel-sidebar-utilities'));\n  assert.ok(multiplayer.includes('margin:34px auto 0!important'));
+  assert.ok(multiplayer.includes("classList.toggle('sivel-public-live',!!(state&&state.isPublic))"));\n  assert.match(multiplayer, /${ACTION_DOCK_MARKER}/);\n  assert.match(multiplayer, /${PUBLIC_FINAL_MARKER}/);\n  assert.ok(multiplayer.includes('slider.step=1;slider.value=max;'));
+  assert.ok(multiplayer.includes("$('nextHandBtn').classList.add('hidden')"));
+  assert.ok(multiplayer.includes('#nextHandBtn{display:none!important}'));
+  assert.ok(multiplayer.includes('#callBtn{left:max(126px,calc(50% - 292px));bottom:46px;width:136px!important'));
+  assert.ok(multiplayer.includes("actionZone.id='sivelActionDock'"));\n  assert.ok(multiplayer.includes('sivelAllInBtn'));\n  assert.ok(multiplayer.includes('data-size=\"half\"'));\n  assert.ok(multiplayer.includes('sivel-action-zone'));\n  assert.ok(multiplayer.includes('sivel-sidebar-bet-control'));\n  assert.ok(multiplayer.includes('sivel-sidebar-utilities'));\n  assert.ok(multiplayer.includes('margin:34px auto 0!important'));
   assert.ok(multiplayer.includes('data-step=\"-1\"'));
   assert.ok(multiplayer.includes('#raiseSlider{display:none!important}'));
   assert.ok(multiplayer.includes("history.insertAdjacentElement('afterend',utilityPanel)"));
@@ -885,7 +1000,7 @@ function writeBaselineTest() {
   assert.ok(index.includes('protectLocalDealerBadge'));
   assert.ok(index.includes("safeLeft=Math.ceil(badgeRect.right-stageRect.left+12)"));
   assert.ok(index.includes("rightPanel.appendChild(betPanel)"));
-  assert.ok(index.includes('margin-top:auto!important'));\n  assert.ok(index.includes('scale(.875)'));\n  assert.ok(index.includes('sivelSoloAllInBtn'));\n  assert.ok(index.includes('sivel-solo-next-hand'));\n  assert.ok(!index.includes(' · YOU'), 'Solo profile must not append a YOU suffix.');\n  const runtime = index.match(/<script id="sivel-solo-professional-table-runtime-v70">([\\s\\S]*?)<\\/script>/);\n  assert.ok(runtime, 'Solo professional runtime is missing.');\n  assert.doesNotThrow(() => new vm.Script(runtime[1], { filename: 'solo-professional-v70.js' }));\n});\n\ntest('inline multiplayer scripts parse', () => {\n  const multiplayer = read('public/multiplayer.html');\n  const scripts = [...multiplayer.matchAll(/<script(?:\\s[^>]*)?>([\\s\\S]*?)<\\/script>/gi)].map(match => match[1]);\n  assert.ok(scripts.length > 0);\n  for (const [index, source] of scripts.entries()) {\n    assert.doesNotThrow(() => new vm.Script(source, { filename: 'multiplayer-inline-' + index + '.js' }));\n  }\n});\n\ntest('server contains the authoritative V57 baseline', () => {\n  const server = read('server.js');\n  assert.match(server, /clean-baseline-v57|${BASELINE_MARKER}/);\n  assert.match(server, /turnId/);\n  assert.match(server, /server/);\n});\n`;
+  assert.ok(index.includes('margin-top:auto!important'));\n  assert.ok(index.includes('scale(.875)'));\n  assert.ok(index.includes('sivelSoloAllInBtn'));\n  assert.ok(index.includes('sivel-solo-next-hand'));\n  assert.ok(!index.includes(' · YOU'), 'Solo profile must not append a YOU suffix.');\n  const runtime = index.match(/<script id="sivel-solo-professional-table-runtime-v70">([\\s\\S]*?)<\\/script>/);\n  assert.ok(runtime, 'Solo professional runtime is missing.');\n  assert.doesNotThrow(() => new vm.Script(runtime[1], { filename: 'solo-professional-v70.js' }));\n});\n\ntest('inline multiplayer scripts parse', () => {\n  const multiplayer = read('public/multiplayer.html');\n  const scripts = [...multiplayer.matchAll(/<script(?:\\s[^>]*)?>([\\s\\S]*?)<\\/script>/gi)].map(match => match[1]);\n  assert.ok(scripts.length > 0);\n  for (const [index, source] of scripts.entries()) {\n    assert.doesNotThrow(() => new vm.Script(source, { filename: 'multiplayer-inline-' + index + '.js' }));\n  }\n});\n\ntest('server contains the authoritative V57 baseline', () => {\n  const server = read('server.js');\n  assert.match(server, /clean-baseline-v57|${BASELINE_MARKER}/);\n  assert.match(server, /turnId/);\n  assert.match(server, /server/);\n  assert.match(server, /${PUBLIC_FINAL_MARKER}/);\n  assert.match(server, /function schedulePrivatePlay/);\n  assert.match(server, /Next hand deals automatically/);\n  assert.match(server, /scheduleRoomPlay\\(room, PUBLIC_NEXT_HAND_MS\\)/);\n});\n`;
   fs.mkdirSync(TEST_DIR, { recursive: true });
   writeAtomic(path.join(TEST_DIR, 'v57-baseline.test.js'), test);
 }
@@ -894,7 +1009,7 @@ function writeBaselineNotes() {
   const notes = `# Sivel Poker V57 clean baseline\n\nV57 permanently bakes the confirmed V55 server-authority work and the V56 public-seat profile stability fix into normal source files.\n\n## Structural changes\n\n- \`npm start\` now runs only \`node server.js\`.\n- The multiplayer client is a readable file at \`public/multiplayer.html\`.\n- \`public/index.html\` loads that client template instead of storing a large base64 payload.\n- V55/V56 scripts are retained under \`legacy-patches/\` for audit and rollback only.\n- \`npm test\` includes V57 regression checks.\n\n## Preserved behavior\n\n- Server-owned turn timers, hand IDs and turn IDs.\n- Strict check, call and raise validation.\n- Public-table auto play, top-ups and all-in runouts.\n- Clickable opponent profiles.\n- One stable identity card per occupied live-table seat.\n- Visible local-player profile and chip count.\n- Ghost-seat cleanup.\n- Waiting-table seats cannot survive into active hands as duplicate profiles.
 - Public live tables do not render a second player roster beside the table.\n- Fold, check/call, raise and all-in reserve a protected center lane around the local cards, chips and profile.\n- Sit out, leave-after-hand, top-up and host controls are stacked directly beneath Hand History in the left sidebar.\n- Raise sizing is fully redesigned as presets plus minus/plus stepping in the right sidebar; the range slider is hidden.\n- The table, center logo and community board retain their approved positions.\n- The pot sits beneath the community cards with enough clearance to leave the table branding readable.\n- Opponent wager and blind chips are anchored three pixels from the first rendered card, without overlap.\n- Hand winners and fold results appear in the protected lane immediately above the community cards at the final approved reduced size.
 - The local player profile displays the normal player name without an added YOU suffix.\n- Solo tables use the same approved compact action layout, protected center lane, board/pot spacing and exact winner/fold banner as public tables.\n- Solo opponent wagers are re-parented into the card rack and anchored three pixels from the first visible card, so rerenders cannot restore the old offset.\n- Solo raise sizing uses presets plus minus/plus stepping at the bottom of the right sidebar, while Next Hand remains available there.\n- The duplicate lower-left difficulty tile and obsolete game-header level tile are continuously hidden after every solo rerender without removing their backing state nodes.
-- The solo raise button dynamically reserves space for the local dealer badge and cannot overlap it.\n- Online-only chat, room codes, sit-out, leave-after-hand and top-up controls are not added to solo play.\n\n## Next development rule\n\nEdit \`server.js\`, \`public/index.html\` and \`public/multiplayer.html\` directly. Do not add another startup patch script.\n`;
+- The solo raise button dynamically reserves space for the local dealer badge and cannot overlap it.\n- Online-only chat, room codes, sit-out, leave-after-hand and top-up controls are not added to solo play.\n- Public top-up sliders use one-chip precision so the exact table maximum is always reachable.\n- Public Fold/Call spacing mirrors Raise/All-In around the protected card lane.\n- Private multiplayer tables hide the manual Next Hand control and deal automatically after the result display.\n\n## Next development rule\n\nEdit \`server.js\`, \`public/index.html\` and \`public/multiplayer.html\` directly. Do not add another startup patch script.\n`;
   writeAtomic(path.join(ROOT, 'V57_BASELINE.md'), notes);
 }
 
@@ -928,7 +1043,10 @@ function main() {
   requireFile(PACKAGE_PATH);
 
   if (read(INDEX_PATH).includes(BASELINE_MARKER) && fs.existsSync(MULTIPLAYER_PATH)) {
-    console.log('V57 clean baseline is already installed; applying the V70 exact solo DOM corrections and verifying it now.');
+    console.log('V57 clean baseline is already installed; applying the V71 multiplayer polish and verifying it now.');
+    const existingServer = read(SERVER_PATH);
+    const upgradedServer = installServerTableFlowUpgrade(existingServer);
+    if (upgradedServer !== existingServer) writeAtomic(SERVER_PATH, upgradedServer);
     const existingIndex = read(INDEX_PATH);
     const upgradedIndex = installSoloTableUpgrade(existingIndex);
     if (upgradedIndex !== existingIndex) writeAtomic(INDEX_PATH, upgradedIndex);
@@ -953,7 +1071,7 @@ function main() {
   const external = externalizeMultiplayer(current.index);
   const packageContent = buildPackage(read(PACKAGE_PATH));
 
-  writeAtomic(SERVER_PATH, cleanServerVersion(current.server));
+  writeAtomic(SERVER_PATH, installServerTableFlowUpgrade(cleanServerVersion(current.server)));
   writeAtomic(INDEX_PATH, installSoloTableUpgrade(external.index));
   writeAtomic(MULTIPLAYER_PATH, external.multiplayer);
   writeAtomic(PACKAGE_PATH, packageContent);
@@ -963,7 +1081,7 @@ function main() {
   archiveLegacyPatches();
   verifyOutputs();
 
-  console.log('Sivel Poker V57 clean baseline built successfully.');
+  console.log('Sivel Poker V71 multiplayer polish built successfully.');
 }
 
 if (require.main === module) {
@@ -982,5 +1100,6 @@ module.exports = {
   cleanServerVersion,
   fixMultiplayerSeatOwnership,
   installMultiplayerActionDock,
-  installSoloTableUpgrade
+  installSoloTableUpgrade,
+  installServerTableFlowUpgrade
 };
