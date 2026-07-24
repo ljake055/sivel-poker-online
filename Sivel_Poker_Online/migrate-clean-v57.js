@@ -207,10 +207,8 @@ function installMultiplayerActionDock(source) {
     /\n*<script id="sivel-pro-player-controls-runtime-v67">[\s\S]*?<\/script>/g
   ];
   for (const pattern of stylePatterns.concat(runtimePatterns)) source = source.replace(pattern, '');
-  source = source.replace(
-    "const nameText=String(player.name||'Player')+(self?' · YOU':'');",
-    "const nameText=String(player.name||'Player');"
-  );
+  // Remove every legacy local-profile suffix, regardless of which older renderer produced it.
+  source = source.split(' · YOU').join('');
   source = source.replace(/\s*<\/head>/i, '\n</head>');
   source = source.replace(/\s*<\/body>/i, '\n</body>');
 
@@ -562,7 +560,7 @@ function writeBaselineTest() {
   assert.ok(multiplayer.includes('boardRect.top-stageRect.top-resultRect.height-12'));
   assert.ok(multiplayer.includes("cards.querySelector('.seat-card')"));
   assert.ok(multiplayer.includes('scale(.875)'));
-  assert.doesNotMatch(multiplayer, /· YOU/);
+  assert.ok(!multiplayer.includes(' · YOU'), 'Local profile must not append a YOU suffix.');
   assert.ok(multiplayer.includes('rightPanel.appendChild(betPanel)'));
   assert.ok(multiplayer.includes("stage.querySelectorAll('#seats > .seat:not(.self-seat):not(.open-seat)')"));\n  assert.doesNotMatch(multiplayer, /sivel-player-console-v60/);
   assert.doesNotMatch(multiplayer, /sivel-pro-player-controls-runtime-v63/);\n  assert.match(multiplayer, /<\\/html>\\s*$/i);\n});\n\ntest('inline multiplayer scripts parse', () => {\n  const multiplayer = read('public/multiplayer.html');\n  const scripts = [...multiplayer.matchAll(/<script(?:\\s[^>]*)?>([\\s\\S]*?)<\\/script>/gi)].map(match => match[1]);\n  assert.ok(scripts.length > 0);\n  for (const [index, source] of scripts.entries()) {\n    assert.doesNotThrow(() => new vm.Script(source, { filename: 'multiplayer-inline-' + index + '.js' }));\n  }\n});\n\ntest('server contains the authoritative V57 baseline', () => {\n  const server = read('server.js');\n  assert.match(server, /clean-baseline-v57|${BASELINE_MARKER}/);\n  assert.match(server, /turnId/);\n  assert.match(server, /server/);\n});\n`;
@@ -607,7 +605,7 @@ function main() {
   requireFile(PACKAGE_PATH);
 
   if (read(INDEX_PATH).includes(BASELINE_MARKER) && fs.existsSync(MULTIPLAYER_PATH)) {
-    console.log('V57 clean baseline is already installed; applying the V67 exact seat polish and verifying them now.');
+    console.log('V57 clean baseline is already installed; applying the V67 exact seat polish with the workflow repair and verifying it now.');
     const existingMultiplayer = read(MULTIPLAYER_PATH);
     const upgradedMultiplayer = installMultiplayerActionDock(existingMultiplayer);
     if (upgradedMultiplayer !== existingMultiplayer) writeAtomic(MULTIPLAYER_PATH, upgradedMultiplayer);
