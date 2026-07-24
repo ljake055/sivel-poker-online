@@ -17,6 +17,7 @@ const BASELINE_MARKER = 'SIVEL_CLEAN_BASELINE_V57';
 const MULTIPLAYER_MARKER = 'SIVEL_CLEAN_MULTIPLAYER_V57';
 const SEAT_OWNERSHIP_MARKER = 'SIVEL_V57_SEAT_ROOT_OWNERSHIP_FIX';
 const PUBLIC_ROSTER_MARKER = 'SIVEL_V57_PUBLIC_ROSTER_DUPLICATE_FIX';
+const ACTION_DOCK_MARKER = 'SIVEL_V57_IN_TABLE_ACTION_DOCK';
 
 function fail(message) {
   throw new Error(message);
@@ -126,7 +127,7 @@ function externalizeMultiplayer(indexSource) {
   const markedMultiplayer = extracted.html.includes(MULTIPLAYER_MARKER)
     ? extracted.html
     : extracted.html.replace(/<!doctype html>/i, `<!doctype html>\n<!-- ${MULTIPLAYER_MARKER} -->`);
-  const multiplayer = fixMultiplayerSeatOwnership(markedMultiplayer);
+  const multiplayer = installMultiplayerActionDock(fixMultiplayerSeatOwnership(markedMultiplayer));
   return { index: rewritten, multiplayer };
 }
 
@@ -179,6 +180,272 @@ function fixMultiplayerSeatOwnership(source) {
   return source;
 }
 
+
+function installMultiplayerActionDock(source) {
+  if (source.includes(ACTION_DOCK_MARKER)) return source;
+
+  const stateMatches = [...source.matchAll(/let\s+state\s*=\s*[^;]+;/g)];
+  if (stateMatches.length !== 1) fail(`V58 action dock expected one multiplayer state declaration, found ${stateMatches.length}.`);
+  source = source.replace(/let\s+state\s*=\s*[^;]+;/, match => `${match}\nwindow.SivelGetTableState=()=>state;`);
+
+  const style = `
+<style id="sivel-in-table-action-dock-v58">
+/* ${ACTION_DOCK_MARKER} — primary poker decisions stay visible inside the table viewport. */
+#gameScreen.sivel-action-dock-screen{min-height:0}
+#gameScreen.sivel-action-dock-screen .table-wrap{position:relative;min-height:0}
+.controls.sivel-controls-relocated{display:none!important}
+.sivel-table-utility-panel{margin-top:14px;padding-top:12px;border-top:1px solid rgba(255,255,255,.07)}
+.sivel-table-utility-panel .table-tools{margin:0!important}
+.sivel-table-utility-panel .host-row{margin-top:9px!important}
+#tableStage.sivel-action-dock-active .poker-table{bottom:20%!important}
+#tableStage.sivel-action-dock-active .center{top:44%!important}
+#tableStage.sivel-action-dock-active .center .pot{transform:translateY(142px) scale(.78)!important}
+#tableStage.sivel-action-dock-active .seat.self-seat{bottom:108px!important}
+#tableStage.sivel-action-dock-active .seat.slot-lower-left,
+#tableStage.sivel-action-dock-active .seat.slot-lower-right{bottom:116px!important}
+.sivel-in-table-action-dock{
+  position:absolute;left:50%;bottom:9px;z-index:90;transform:translateX(-50%);
+  width:min(920px,calc(100% - 26px));padding:8px;border-radius:18px;
+  border:1px solid rgba(226,190,105,.48);
+  background:linear-gradient(180deg,rgba(16,27,39,.97),rgba(4,9,14,.985));
+  box-shadow:0 16px 34px rgba(0,0,0,.62),inset 0 1px 0 rgba(255,255,255,.08),0 0 26px rgba(218,177,79,.08);
+  backdrop-filter:blur(18px);pointer-events:auto
+}
+.sivel-dock-head{display:flex;align-items:stretch;gap:7px;margin-bottom:7px}
+.sivel-dock-status-slot{min-width:0;flex:1}
+.sivel-in-table-action-dock #gameStatus.sivel-dock-status{
+  display:flex!important;align-items:center!important;justify-content:flex-start!important;
+  width:100%!important;min-width:0!important;min-height:30px!important;margin:0!important;padding:6px 10px!important;
+  transform:none!important;position:relative!important;inset:auto!important;
+  border-radius:10px!important;border:1px solid rgba(83,118,146,.42)!important;
+  background:linear-gradient(180deg,rgba(9,20,30,.98),rgba(5,12,19,.98))!important;
+  box-shadow:inset 0 1px 0 rgba(255,255,255,.05)!important;
+  color:#c7d5df!important;font-size:10px!important;font-weight:850!important;letter-spacing:.035em!important;
+  line-height:1.25!important;text-align:left!important;z-index:1!important;pointer-events:none!important
+}
+.sivel-in-table-action-dock #gameStatus.sivel-result-placeholder{visibility:hidden!important}
+.sivel-dock-metrics{display:flex;gap:6px;flex:0 0 auto}
+.sivel-dock-metric{min-width:78px;padding:4px 9px;border-radius:10px;border:1px solid rgba(255,255,255,.08);background:rgba(5,12,18,.82);text-align:center}
+.sivel-dock-metric small{display:block;font-size:6px;font-weight:950;letter-spacing:.16em;color:#7890a3}
+.sivel-dock-metric strong{display:block;margin-top:2px;font-size:12px;line-height:1;color:#f2d58a;font-variant-numeric:tabular-nums}
+.sivel-in-table-action-dock .action-row{
+  display:grid!important;grid-template-columns:minmax(250px,1.55fr) repeat(4,minmax(105px,.68fr))!important;
+  align-items:stretch!important;gap:7px!important
+}
+.sivel-in-table-action-dock .raise-box{
+  grid-column:1!important;display:grid!important;grid-template-columns:minmax(0,1fr) 82px!important;
+  grid-template-rows:23px 27px!important;gap:4px 8px!important;min-height:58px!important;
+  padding:5px 8px!important;border-radius:12px!important;border:1px solid rgba(82,116,143,.48)!important;
+  background:linear-gradient(180deg,rgba(14,27,39,.98),rgba(6,13,20,.98))!important
+}
+.sivel-quick-bets{grid-column:1/-1;display:grid;grid-template-columns:repeat(4,1fr);gap:4px}
+.sivel-quick-bet{
+  min-width:0;height:23px;padding:0 5px;border-radius:7px;border:1px solid rgba(92,125,151,.48);
+  background:linear-gradient(180deg,#172737,#0b151f);color:#b9cad7;font-size:7px;font-weight:950;letter-spacing:.08em;cursor:pointer
+}
+.sivel-quick-bet:hover:not(:disabled){border-color:#e4c56c;color:#ffe5a0;filter:brightness(1.08)}
+.sivel-quick-bet:disabled{opacity:.3;cursor:not-allowed}
+.sivel-in-table-action-dock .raise-box input[type="range"]{grid-column:1;grid-row:2;width:100%;margin:0!important;align-self:center}
+.sivel-in-table-action-dock .raise-total{
+  grid-column:2;grid-row:2;min-width:0!important;display:flex!important;flex-direction:column!important;
+  align-items:flex-end!important;justify-content:center!important;line-height:1!important
+}
+.sivel-in-table-action-dock .raise-total small{font-size:6px!important;color:#74899b!important}
+.sivel-in-table-action-dock .raise-total strong{font-size:13px!important;color:#f3d47f!important}
+.sivel-in-table-action-dock .action-btn{
+  min-width:0!important;height:58px!important;padding:7px 10px!important;border-radius:12px!important;
+  font-size:12px!important;font-weight:950!important;letter-spacing:.025em!important
+}
+.sivel-in-table-action-dock #foldBtn{grid-column:2}
+.sivel-in-table-action-dock #callBtn{grid-column:3}
+.sivel-in-table-action-dock #raiseBtn{grid-column:4}
+.sivel-in-table-action-dock .sivel-all-in{
+  grid-column:5;border:1px solid #e39d32!important;
+  background:linear-gradient(180deg,#d75d29,#7c2115)!important;color:#fff1d6!important;
+  box-shadow:inset 0 1px 0 rgba(255,255,255,.16),0 7px 16px rgba(0,0,0,.32)!important
+}
+.sivel-in-table-action-dock .action-btn:disabled{opacity:.34!important;filter:saturate(.45)!important;cursor:not-allowed!important}
+.sivel-in-table-action-dock.sivel-dock-waiting{width:min(520px,calc(100% - 26px))}
+.sivel-in-table-action-dock.sivel-dock-waiting .sivel-dock-body,
+.sivel-in-table-action-dock.sivel-dock-waiting .sivel-dock-metrics{display:none!important}
+@media(min-width:1181px){
+  #gameScreen.sivel-action-dock-screen{height:100vh;overflow:hidden}
+  #gameScreen.sivel-action-dock-screen>.shell{height:100%;display:flex;flex-direction:column;padding-top:10px;padding-bottom:12px}
+  #gameScreen.sivel-action-dock-screen .topbar{flex:0 0 auto}
+  #gameScreen.sivel-action-dock-screen .game-layout{flex:1;min-height:0;margin-top:10px;align-items:stretch}
+  #gameScreen.sivel-action-dock-screen .table-wrap{height:100%;display:flex;min-height:0}
+  #gameScreen.sivel-action-dock-screen #tableStage{height:100%!important;min-height:570px;flex:1 1 auto;width:100%}
+  #gameScreen.sivel-action-dock-screen .side-panel{height:100%;min-height:0!important;overflow:auto}
+}
+@media(max-width:900px){
+  .sivel-in-table-action-dock{width:calc(100% - 14px);bottom:6px;padding:6px}
+  .sivel-in-table-action-dock .action-row{grid-template-columns:repeat(4,1fr)!important}
+  .sivel-in-table-action-dock .raise-box{grid-column:1/-1!important;grid-row:1}
+  .sivel-in-table-action-dock #foldBtn{grid-column:1;grid-row:2}
+  .sivel-in-table-action-dock #callBtn{grid-column:2;grid-row:2}
+  .sivel-in-table-action-dock #raiseBtn{grid-column:3;grid-row:2}
+  .sivel-in-table-action-dock .sivel-all-in{grid-column:4;grid-row:2}
+  #tableStage.sivel-action-dock-active .seat.self-seat{bottom:142px!important}
+  #tableStage.sivel-action-dock-active .seat.slot-lower-left,
+  #tableStage.sivel-action-dock-active .seat.slot-lower-right{bottom:150px!important}
+}
+@media(max-width:620px){
+  .sivel-dock-head{display:block}.sivel-dock-metrics{display:none}
+  .sivel-in-table-action-dock .action-row{grid-template-columns:repeat(2,1fr)!important}
+  .sivel-in-table-action-dock .raise-box{grid-column:1/-1!important;grid-row:1}
+  .sivel-in-table-action-dock #foldBtn{grid-column:1;grid-row:2}
+  .sivel-in-table-action-dock #callBtn{grid-column:2;grid-row:2}
+  .sivel-in-table-action-dock #raiseBtn{grid-column:1;grid-row:3}
+  .sivel-in-table-action-dock .sivel-all-in{grid-column:2;grid-row:3}
+  .sivel-in-table-action-dock .action-btn{height:43px!important;font-size:10px!important}
+  #tableStage.sivel-action-dock-active .seat.self-seat{bottom:185px!important}
+}
+</style>`;
+
+  const runtime = `
+<script id="sivel-in-table-action-dock-runtime-v58">
+(function(){
+  'use strict';
+  function initSivelActionDock(){
+    const screen=document.getElementById('gameScreen');
+    const stage=document.getElementById('tableStage');
+    const controls=screen&&screen.querySelector('.controls');
+    const actionRow=controls&&controls.querySelector('.action-row');
+    const status=document.getElementById('gameStatus');
+    const slider=document.getElementById('raiseSlider');
+    const raiseTotal=document.getElementById('raiseTotal');
+    const raiseBtn=document.getElementById('raiseBtn');
+    if(!screen||!stage||!controls||!actionRow||!status||!slider||!raiseTotal||!raiseBtn)return;
+    if(document.getElementById('sivelActionDock'))return;
+
+    const dock=document.createElement('section');
+    dock.id='sivelActionDock';
+    dock.className='sivel-in-table-action-dock sivel-dock-waiting';
+    dock.setAttribute('aria-label','Poker action controls');
+    dock.innerHTML='<div class="sivel-dock-head"><div class="sivel-dock-status-slot"></div><div class="sivel-dock-metrics"><div class="sivel-dock-metric"><small>POT</small><strong id="sivelDockPot">0</strong></div><div class="sivel-dock-metric"><small>TO CALL</small><strong id="sivelDockCall">CHECK</strong></div><div class="sivel-dock-metric"><small>RAISE TO</small><strong id="sivelDockRaise">—</strong></div></div></div><div class="sivel-dock-body"></div>';
+    dock.querySelector('.sivel-dock-status-slot').appendChild(status);
+    status.classList.add('sivel-dock-status');
+    dock.querySelector('.sivel-dock-body').appendChild(actionRow);
+
+    const raiseBox=actionRow.querySelector('.raise-box');
+    const quick=document.createElement('div');
+    quick.className='sivel-quick-bets';
+    quick.innerHTML='<button type="button" class="sivel-quick-bet" data-size="min">MIN</button><button type="button" class="sivel-quick-bet" data-size="half">½ POT</button><button type="button" class="sivel-quick-bet" data-size="pot">POT</button><button type="button" class="sivel-quick-bet" data-size="max">MAX</button>';
+    if(raiseBox)raiseBox.insertBefore(quick,raiseBox.firstChild);
+
+    const allIn=document.createElement('button');
+    allIn.type='button';
+    allIn.id='sivelAllInBtn';
+    allIn.className='action-btn sivel-all-in';
+    allIn.textContent='All-In';
+    actionRow.appendChild(allIn);
+
+    const utilityHost=document.createElement('div');
+    utilityHost.className='sivel-table-utility-panel';
+    const tableTools=document.getElementById('tableTools');
+    const hostRow=controls.querySelector('.host-row');
+    if(tableTools)utilityHost.appendChild(tableTools);
+    if(hostRow)utilityHost.appendChild(hostRow);
+    const rightPanel=screen.querySelector('.game-right');
+    if(rightPanel&&(tableTools||hostRow))rightPanel.appendChild(utilityHost);
+    controls.classList.add('sivel-controls-relocated');
+    stage.appendChild(dock);
+
+    const potMetric=document.getElementById('sivelDockPot');
+    const callMetric=document.getElementById('sivelDockCall');
+    const raiseMetric=document.getElementById('sivelDockRaise');
+    const quickButtons=Array.from(quick.querySelectorAll('button'));
+    let syncQueued=false;
+
+    function tableState(){
+      try{return typeof window.SivelGetTableState==='function'?window.SivelGetTableState():null}
+      catch(_error){return null}
+    }
+    function number(value){const parsed=Number(value);return Number.isFinite(parsed)?parsed:0}
+    function format(value){return Math.max(0,Math.round(number(value))).toLocaleString()}
+    function setText(element,value){if(element&&element.textContent!==String(value))element.textContent=String(value)}
+    function limits(data){
+      const legal=data&&data.legal||{};
+      return{min:number(legal.minRaiseTotal||slider.min),max:number(legal.maxRaiseTotal||slider.max)};
+    }
+    function setRaiseTarget(value){
+      const data=tableState(),range=limits(data);
+      if(!(range.max>0))return;
+      const step=Math.max(1,number(data&&data.options&&data.options.smallBlind)||number(slider.step)||1);
+      let target=Math.round(number(value)/step)*step;
+      target=Math.max(range.min,Math.min(range.max,target));
+      slider.value=String(target);
+      slider.dispatchEvent(new Event('input',{bubbles:true}));
+      scheduleSync();
+    }
+    function sizingTarget(kind){
+      const data=tableState(),game=data&&data.game||{},legal=data&&data.legal||{},range=limits(data);
+      const self=(data&&Array.isArray(data.players)?data.players:[]).find(function(player){return player&&player.isSelf})||{};
+      const streetBet=number(self.streetBet);
+      const toCall=number(legal.toCall);
+      const pot=number(game.pot);
+      if(kind==='min')return range.min;
+      if(kind==='max')return range.max;
+      const afterCall=streetBet+toCall;
+      const callablePot=pot+toCall;
+      return afterCall+callablePot*(kind==='half'?.5:1);
+    }
+    function sync(){
+      syncQueued=false;
+      const data=tableState(),game=data&&data.game,legal=data&&data.legal||{};
+      const playing=!!(data&&data.stage==='playing'&&game);
+      screen.classList.toggle('sivel-action-dock-screen',playing);
+      stage.classList.toggle('sivel-action-dock-active',playing);
+      document.body.classList.toggle('sivel-table-play-mode',playing);
+      dock.classList.toggle('sivel-dock-waiting',!playing);
+      const toCall=number(legal.toCall);
+      const current=number(slider.value);
+      setText(potMetric,format(game&&game.pot));
+      setText(callMetric,toCall?format(toCall):'CHECK');
+      setText(raiseMetric,current?format(current):'—');
+      const range=limits(data);
+      const canRaise=playing&&!!legal.canAct&&!!legal.canRaise&&range.max>=range.min&&range.max>0;
+      quickButtons.forEach(function(button){button.disabled=!canRaise});
+      allIn.disabled=!canRaise;
+    }
+    function scheduleSync(){
+      if(syncQueued)return;
+      syncQueued=true;
+      (window.requestAnimationFrame||setTimeout)(sync);
+    }
+
+    quick.addEventListener('click',function(event){
+      const button=event.target&&event.target.closest?event.target.closest('[data-size]'):null;
+      if(!button||button.disabled)return;
+      setRaiseTarget(sizingTarget(button.dataset.size));
+    });
+    allIn.addEventListener('click',function(){
+      if(allIn.disabled)return;
+      const data=tableState(),range=limits(data);
+      setRaiseTarget(range.max);
+      requestAnimationFrame(function(){if(!raiseBtn.disabled)raiseBtn.click()});
+    });
+    slider.addEventListener('input',scheduleSync);
+    const observer=new MutationObserver(scheduleSync);
+    observer.observe(screen,{subtree:true,childList:true,characterData:true,attributes:true,attributeFilter:['disabled','class','value']});
+    window.addEventListener('resize',scheduleSync);
+    setInterval(scheduleSync,350);
+    sync();
+  }
+  if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',initSivelActionDock,{once:true});
+  else initSivelActionDock();
+})();
+</script>`;
+
+  if (!source.includes('</head>') || !source.includes('</body>')) {
+    fail('V57 action dock could not find the multiplayer document boundaries.');
+  }
+  source = source.replace('</head>', style + '\n</head>');
+  source = source.replace('</body>', runtime + '\n</body>');
+  return source;
+}
+
+
 function cleanServerVersion(serverSource) {
   let result = serverSource;
   result = result.replace(
@@ -193,8 +460,8 @@ function cleanServerVersion(serverSource) {
 
 function buildPackage(existing) {
   const pkg = JSON.parse(existing);
-  pkg.version = '2.1.2';
-  pkg.description = 'Sivel Poker clean V57 baseline with persistent accounts and server-authoritative multiplayer poker.';
+  pkg.version = '2.2.0';
+  pkg.description = 'Sivel Poker clean V57 baseline with a professional in-table action dock.';
   pkg.sivelBaseline = 'V57';
   pkg.scripts = {
     start: 'node server.js',
@@ -220,14 +487,14 @@ function writeBaselineTest() {
   const test = `'use strict';\n\nconst test = require('node:test');\nconst assert = require('node:assert/strict');\nconst fs = require('node:fs');\nconst path = require('node:path');\nconst vm = require('node:vm');\n\nconst ROOT = path.resolve(__dirname, '..');\nconst read = relative => fs.readFileSync(path.join(ROOT, relative), 'utf8');\n\ntest('V57 starts the server without runtime patch scripts', () => {\n  const pkg = JSON.parse(read('package.json'));\n  assert.equal(pkg.sivelBaseline, 'V57');\n  assert.equal(pkg.scripts.start, 'node server.js');\n  assert.doesNotMatch(pkg.scripts.start, /apply-|patch/i);\n});\n\ntest('multiplayer client is external and readable', () => {\n  const index = read('public/index.html');\n  const multiplayer = read('public/multiplayer.html');\n  assert.match(index, /${BASELINE_MARKER}/);\n  assert.match(index, /multiplayerTemplatePromise/);\n  assert.doesNotMatch(index, /const encoded='/);\n  assert.doesNotMatch(index, /atob\\(encoded\\)/);\n  assert.match(multiplayer, /${MULTIPLAYER_MARKER}/);\n  assert.match(multiplayer, /SIVEL_SERVER_AUTHORITY_CLIENT_V55/);\n  assert.match(multiplayer, /SIVEL_PUBLIC_SEAT_PROFILE_STABILITY_V56/);\n  assert.match(multiplayer, /SIVEL_V57_SEAT_ROOT_OWNERSHIP_FIX/);\n  assert.ok(multiplayer.includes('!ownedRoots.has(node)'));\n  assert.ok(multiplayer.includes('sivelStableSeatNodes.clear()'));\n  assert.ok(multiplayer.includes('data-player-index=\"\${originalIndex}\"'));
   assert.match(multiplayer, /SIVEL_V57_PUBLIC_ROSTER_DUPLICATE_FIX/);
   assert.ok(multiplayer.includes("$('gamePlayers').innerHTML=state.isPublic?'':activePlayerRows+publicSideInviteRows(activeOpenSeats)"));
-  assert.ok(multiplayer.includes("classList.toggle('sivel-public-live',!!(state&&state.isPublic))"));\n  assert.match(multiplayer, /<\\/html>\\s*$/i);\n});\n\ntest('inline multiplayer scripts parse', () => {\n  const multiplayer = read('public/multiplayer.html');\n  const scripts = [...multiplayer.matchAll(/<script(?:\\s[^>]*)?>([\\s\\S]*?)<\\/script>/gi)].map(match => match[1]);\n  assert.ok(scripts.length > 0);\n  for (const [index, source] of scripts.entries()) {\n    assert.doesNotThrow(() => new vm.Script(source, { filename: 'multiplayer-inline-' + index + '.js' }));\n  }\n});\n\ntest('server contains the authoritative V57 baseline', () => {\n  const server = read('server.js');\n  assert.match(server, /clean-baseline-v57|${BASELINE_MARKER}/);\n  assert.match(server, /turnId/);\n  assert.match(server, /server/);\n});\n`;
+  assert.ok(multiplayer.includes("classList.toggle('sivel-public-live',!!(state&&state.isPublic))"));\n  assert.match(multiplayer, /${ACTION_DOCK_MARKER}/);\n  assert.ok(multiplayer.includes("dock.id='sivelActionDock'"));\n  assert.ok(multiplayer.includes('sivelAllInBtn'));\n  assert.ok(multiplayer.includes('data-size=\"half\"'));\n  assert.match(multiplayer, /<\\/html>\\s*$/i);\n});\n\ntest('inline multiplayer scripts parse', () => {\n  const multiplayer = read('public/multiplayer.html');\n  const scripts = [...multiplayer.matchAll(/<script(?:\\s[^>]*)?>([\\s\\S]*?)<\\/script>/gi)].map(match => match[1]);\n  assert.ok(scripts.length > 0);\n  for (const [index, source] of scripts.entries()) {\n    assert.doesNotThrow(() => new vm.Script(source, { filename: 'multiplayer-inline-' + index + '.js' }));\n  }\n});\n\ntest('server contains the authoritative V57 baseline', () => {\n  const server = read('server.js');\n  assert.match(server, /clean-baseline-v57|${BASELINE_MARKER}/);\n  assert.match(server, /turnId/);\n  assert.match(server, /server/);\n});\n`;
   fs.mkdirSync(TEST_DIR, { recursive: true });
   writeAtomic(path.join(TEST_DIR, 'v57-baseline.test.js'), test);
 }
 
 function writeBaselineNotes() {
   const notes = `# Sivel Poker V57 clean baseline\n\nV57 permanently bakes the confirmed V55 server-authority work and the V56 public-seat profile stability fix into normal source files.\n\n## Structural changes\n\n- \`npm start\` now runs only \`node server.js\`.\n- The multiplayer client is a readable file at \`public/multiplayer.html\`.\n- \`public/index.html\` loads that client template instead of storing a large base64 payload.\n- V55/V56 scripts are retained under \`legacy-patches/\` for audit and rollback only.\n- \`npm test\` includes V57 regression checks.\n\n## Preserved behavior\n\n- Server-owned turn timers, hand IDs and turn IDs.\n- Strict check, call and raise validation.\n- Public-table auto play, top-ups and all-in runouts.\n- Clickable opponent profiles.\n- One stable identity card per occupied live-table seat.\n- Visible local-player profile and chip count.\n- Ghost-seat cleanup.\n- Waiting-table seats cannot survive into active hands as duplicate profiles.
-- Public live tables do not render a second player roster beside the table.\n\n## Next development rule\n\nEdit \`server.js\`, \`public/index.html\` and \`public/multiplayer.html\` directly. Do not add another startup patch script.\n`;
+- Public live tables do not render a second player roster beside the table.\n- Fold, check/call, raise, all-in and bet sizing remain inside the visible table viewport.\n\n## Next development rule\n\nEdit \`server.js\`, \`public/index.html\` and \`public/multiplayer.html\` directly. Do not add another startup patch script.\n`;
   writeAtomic(path.join(ROOT, 'V57_BASELINE.md'), notes);
 }
 
@@ -261,7 +528,13 @@ function main() {
   requireFile(PACKAGE_PATH);
 
   if (read(INDEX_PATH).includes(BASELINE_MARKER) && fs.existsSync(MULTIPLAYER_PATH)) {
-    console.log('V57 clean baseline is already installed; verifying it now.');
+    console.log('V57 clean baseline is already installed; applying the V58 table action dock and verifying it now.');
+    const existingMultiplayer = read(MULTIPLAYER_PATH);
+    const upgradedMultiplayer = installMultiplayerActionDock(existingMultiplayer);
+    if (upgradedMultiplayer !== existingMultiplayer) writeAtomic(MULTIPLAYER_PATH, upgradedMultiplayer);
+    writeAtomic(PACKAGE_PATH, buildPackage(read(PACKAGE_PATH)));
+    writeBaselineTest();
+    writeBaselineNotes();
     verifyOutputs();
     return;
   }
@@ -304,5 +577,6 @@ module.exports = {
   nearestContainingFunction,
   buildPackage,
   cleanServerVersion,
-  fixMultiplayerSeatOwnership
+  fixMultiplayerSeatOwnership,
+  installMultiplayerActionDock
 };
