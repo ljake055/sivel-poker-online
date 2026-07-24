@@ -18,7 +18,7 @@ const MULTIPLAYER_MARKER = 'SIVEL_CLEAN_MULTIPLAYER_V57';
 const SEAT_OWNERSHIP_MARKER = 'SIVEL_V57_SEAT_ROOT_OWNERSHIP_FIX';
 const PUBLIC_ROSTER_MARKER = 'SIVEL_V57_PUBLIC_ROSTER_DUPLICATE_FIX';
 const ACTION_DOCK_MARKER = 'SIVEL_V57_PRO_PLAYER_CONTROLS_V67';
-const SOLO_TABLE_MARKER = 'SIVEL_V57_SOLO_PRO_TABLE_V68';
+const SOLO_TABLE_MARKER = 'SIVEL_V57_SOLO_PRO_TABLE_V69';
 
 function fail(message) {
   throw new Error(message);
@@ -507,17 +507,24 @@ function installMultiplayerActionDock(source) {
 }
 
 function installSoloTableUpgrade(source) {
-  const stylePattern = /\n*<style id="sivel-solo-professional-table-v68">[\s\S]*?<\/style>/g;
-  const runtimePattern = /\n*<script id="sivel-solo-professional-table-runtime-v68">[\s\S]*?<\/script>/g;
-  source = source.replace(stylePattern, '').replace(runtimePattern, '');
+  const stylePatterns = [
+    /\n*<style id="sivel-solo-professional-table-v68">[\s\S]*?<\/style>/g,
+    /\n*<style id="sivel-solo-professional-table-v69">[\s\S]*?<\/style>/g
+  ];
+  const runtimePatterns = [
+    /\n*<script id="sivel-solo-professional-table-runtime-v68">[\s\S]*?<\/script>/g,
+    /\n*<script id="sivel-solo-professional-table-runtime-v69">[\s\S]*?<\/script>/g
+  ];
+  for (const pattern of stylePatterns.concat(runtimePatterns)) source = source.replace(pattern, '');
   source = source.split(' · YOU').join('');
   source = source.replace(/\s*<\/head>/i, '\n</head>');
   source = source.replace(/\s*<\/body>/i, '\n</body>');
 
-  const style = `<style id="sivel-solo-professional-table-v68">
-/* ${SOLO_TABLE_MARKER} — approved public-table usability carried into solo play without online-only controls. */
+  const style = `<style id="sivel-solo-professional-table-v69">
+/* ${SOLO_TABLE_MARKER} — exact public-table result presentation and wager placement, adapted for solo play. */
 #gameScreen.sivel-solo-professional{min-height:0}
 #gameScreen.sivel-solo-professional .control-deck.sivel-solo-controls-relocated{display:none!important}
+#gameScreen.sivel-solo-professional .sivel-solo-obsolete{display:none!important}
 #gameScreen.sivel-solo-professional .sivel-solo-stats-panel{display:grid!important;grid-template-columns:repeat(2,minmax(0,1fr))!important;gap:6px!important;margin:14px 0 0!important;padding:14px 0 0!important;border-top:1px solid rgba(255,255,255,.08)!important;background:none!important;box-shadow:none!important}
 #gameScreen.sivel-solo-professional .sivel-solo-stats-panel:before{content:'SOLO SESSION';grid-column:1/-1;font-size:8px;font-weight:950;letter-spacing:.16em;color:#9fb2c1;margin-bottom:2px}
 #gameScreen.sivel-solo-professional .sivel-solo-stats-panel .game-stat{min-width:0;padding:8px 6px!important;border-radius:10px!important;border:1px solid #263b4d!important;background:linear-gradient(180deg,#101d29,#08121b)!important;text-align:center!important}
@@ -543,7 +550,8 @@ function installSoloTableUpgrade(source) {
 .sivel-solo-action-zone .action:hover:not(:disabled){transform:translateY(-3px)!important;filter:brightness(1.08)!important}
 .sivel-solo-action-zone .action:disabled{opacity:.31!important;filter:saturate(.42)!important;cursor:not-allowed!important}
 
-.sivel-solo-sidebar-bet{margin:12px 0 0;padding:10px;border-radius:14px;border:1px solid rgba(78,109,134,.5);background:linear-gradient(180deg,rgba(13,27,39,.97),rgba(5,13,20,.99));box-shadow:inset 0 1px 0 rgba(255,255,255,.045)}
+#gameScreen.sivel-solo-professional .sivel-solo-right-panel{display:flex!important;flex-direction:column!important}
+.sivel-solo-sidebar-bet{flex:0 0 auto;margin:12px 0 0!important;margin-top:auto!important;padding:10px;border-radius:14px;border:1px solid rgba(78,109,134,.5);background:linear-gradient(180deg,rgba(13,27,39,.97),rgba(5,13,20,.99));box-shadow:inset 0 1px 0 rgba(255,255,255,.045)}
 .sivel-solo-sidebar-bet .sivel-solo-bet-head{display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:8px}
 .sivel-solo-sidebar-bet .sivel-solo-bet-head span{font-size:7px;font-weight:950;letter-spacing:.16em;color:#7690a4}
 .sivel-solo-sidebar-bet .sivel-solo-bet-head strong{font-size:16px;line-height:1;color:#f1d17d;font-variant-numeric:tabular-nums}
@@ -562,8 +570,20 @@ function installSoloTableUpgrade(source) {
 .sivel-solo-next-hand{width:100%;height:38px;margin-top:8px;border-radius:10px!important;border:1px solid #d1aa55!important;background:linear-gradient(180deg,#ecd080,#a76d1e)!important;color:#241704!important;font-weight:950!important;cursor:pointer!important}
 .sivel-solo-next-hand.hidden{display:none!important}
 
+/* Exact public-table wager placement: three pixels left of the first visible card. */
 #gameScreen.sivel-solo-professional .seat:not(.sivel-solo-self-seat) .bet-badge.sivel-solo-opponent-bet-left{position:absolute!important;right:auto!important;bottom:auto!important;margin:0!important;transform:none!important;z-index:18!important;pointer-events:none!important;white-space:nowrap!important}
-#gameScreen.sivel-solo-professional .hand-result.sivel-solo-hand-result{position:absolute!important;inset:auto!important;right:auto!important;bottom:auto!important;margin:0!important;transform:translateX(-50%) scale(.875)!important;transform-origin:center bottom!important;z-index:97!important;max-width:min(460px,calc(100% - 40px))!important;pointer-events:none!important}
+
+/* Exact public-table winner/fold banner styling and protected position. */
+#gameScreen.sivel-solo-professional .hand-result.sivel-solo-hand-result{
+  position:absolute!important;inset:auto!important;right:auto!important;bottom:auto!important;margin:0!important;
+  width:min(440px,calc(100% - 30px))!important;padding:16px 18px!important;border-radius:18px!important;
+  background:rgba(7,12,18,.95)!important;border:1px solid rgba(234,196,106,.38)!important;
+  box-shadow:0 18px 42px rgba(0,0,0,.5)!important;text-align:center!important;
+  transform:translateX(-50%) scale(.875)!important;transform-origin:center bottom!important;
+  z-index:97!important;pointer-events:none!important
+}
+#gameScreen.sivel-solo-professional .hand-result.sivel-solo-hand-result strong{display:block!important;font-family:Georgia,serif!important;font-size:25px!important;color:#f1d186!important}
+#gameScreen.sivel-solo-professional .hand-result.sivel-solo-hand-result span{display:block!important;color:#b4c2ce!important;font-size:12px!important;line-height:1.45!important;margin-top:6px!important}
 
 @media(min-width:1181px){
   #gameScreen.sivel-solo-professional{height:100vh;overflow:hidden}
@@ -577,12 +597,11 @@ function installSoloTableUpgrade(source) {
 }
 @media(max-width:900px) and (min-width:761px){
   .sivel-solo-action-zone{--solo-left-near:calc(50% - 188px);--solo-left-far:calc(50% - 280px);--solo-right-near:calc(50% + 66px);--solo-right-far:calc(50% + 188px)}
-  .sivel-solo-action-zone .action{font-size:9px!important}
   #gameScreen.sivel-solo-professional .seat.sivel-solo-self-seat{bottom:132px!important}
   #gameScreen.sivel-solo-professional .seat.slot-lower-left:not(.sivel-solo-self-seat),#gameScreen.sivel-solo-professional .seat.slot-lower-right:not(.sivel-solo-self-seat){bottom:210px!important}
 }
 @media(max-width:760px){
-  #gameScreen.sivel-solo-professional .center-table{width:88%!important}
+  #gameScreen.sivel-solo-professional .center-table{top:49%!important;width:88%!important}
   #gameScreen.sivel-solo-professional .center-table:before{height:28px;flex-basis:28px}
   #gameScreen.sivel-solo-professional .center-table .pot{margin-top:19px!important;transform:scale(.6)!important}
   #gameScreen.sivel-solo-professional .seat.sivel-solo-self-seat{bottom:176px!important}
@@ -592,7 +611,7 @@ function installSoloTableUpgrade(source) {
 }
 </style>`;
 
-  const runtime = `<script id="sivel-solo-professional-table-runtime-v68">
+  const runtime = `<script id="sivel-solo-professional-table-runtime-v69">
 (function(){
   'use strict';
   function initSoloProfessionalTable(){
@@ -623,7 +642,20 @@ function installSoloTableUpgrade(source) {
 
     screen.classList.add('sivel-solo-professional');
     controlDeck.classList.add('sivel-solo-controls-relocated');
-    if(stats){stats.classList.add('sivel-solo-stats-panel');const history=leftPanel.querySelector('#log');if(history)history.insertAdjacentElement('afterend',stats);else leftPanel.appendChild(stats)}
+    rightPanel.classList.add('sivel-solo-right-panel');
+
+    const levelValue=document.getElementById('gameLevel');
+    if(levelValue){const levelChip=levelValue.closest('.game-chip');if(levelChip)levelChip.classList.add('sivel-solo-obsolete')}
+
+    if(stats){
+      stats.classList.add('sivel-solo-stats-panel');
+      Array.from(stats.querySelectorAll('.game-stat')).forEach(function(item){
+        const label=item.querySelector('small');
+        if(label&&label.textContent.trim().toUpperCase()==='DIFFICULTY')item.classList.add('sivel-solo-obsolete');
+      });
+      const history=leftPanel.querySelector('#log');
+      if(history)history.insertAdjacentElement('afterend',stats);else leftPanel.appendChild(stats);
+    }
 
     const actionZone=document.createElement('section');
     actionZone.id='sivelSoloActionZone';
@@ -634,13 +666,18 @@ function installSoloTableUpgrade(source) {
     allIn.type='button';allIn.id='sivelSoloAllInBtn';allIn.className='action sivel-solo-all-in';allIn.textContent='All-In';actionZone.appendChild(allIn);
     stage.appendChild(actionZone);
 
+    if(resultBox){
+      resultBox.classList.add('sivel-solo-hand-result','sivel-hand-result-banner');
+      stage.appendChild(resultBox);
+    }
+
     const betPanel=document.createElement('section');
     betPanel.id='sivelSoloBetControl';betPanel.className='sivel-solo-sidebar-bet';betPanel.setAttribute('aria-label','Solo bet sizing');
     betPanel.innerHTML='<div class="sivel-solo-bet-head"><span>RAISE TO</span><strong id="sivelSoloBetValue">—</strong></div><div class="sivel-solo-quick"><button type="button" class="sivel-solo-size" data-solo-size="min">MIN</button><button type="button" class="sivel-solo-size" data-solo-size="half">½ POT</button><button type="button" class="sivel-solo-size" data-solo-size="pot">POT</button><button type="button" class="sivel-solo-size" data-solo-size="max">MAX</button></div><div class="sivel-solo-stepper"><button type="button" data-solo-step="-1" aria-label="Decrease raise">−</button><div class="sivel-solo-bet-value" id="sivelSoloStepValue">—</div><button type="button" data-solo-step="1" aria-label="Increase raise">+</button></div>';
     betPanel.appendChild(raiseBox);
     status.classList.add('sivel-solo-status');betPanel.appendChild(status);
     if(nextHand){nextHand.classList.add('sivel-solo-next-hand');betPanel.appendChild(nextHand)}
-    const dealerBox=rightPanel.querySelector('.dealer-box');if(dealerBox)dealerBox.insertAdjacentElement('afterend',betPanel);else rightPanel.insertBefore(betPanel,rightPanel.firstChild);
+    rightPanel.appendChild(betPanel);
 
     const originalHalf=quickRow&&quickRow.querySelector('[data-bet="half"]');
     const originalPot=quickRow&&quickRow.querySelector('[data-bet="pot"]');
@@ -661,17 +698,23 @@ function installSoloTableUpgrade(source) {
       seats.forEach(function(seat){
         const self=String(seat.dataset.index)==='0';seat.classList.toggle('sivel-solo-self-seat',self);
         if(self)return;
-        const cards=seat.querySelector('.seat-cards');const bet=seat.querySelector('.bet-badge');if(!cards||!bet)return;
-        const firstCard=cards.querySelector('.card');const seatRect=seat.getBoundingClientRect();const cardsRect=cards.getBoundingClientRect();const anchorRect=firstCard?firstCard.getBoundingClientRect():cardsRect;const betRect=bet.getBoundingClientRect();
+        const cards=seat.querySelector('.seat-cards');const bet=seat.querySelector('.bet-badge');if(!cards||!bet||!bet.textContent.trim())return;
+        const visibleCards=Array.from(cards.querySelectorAll('.card')).filter(function(card){const rect=card.getBoundingClientRect();return rect.width>0&&rect.height>0});
+        const firstCard=visibleCards[0]||cards.querySelector('.card');
+        const seatRect=seat.getBoundingClientRect();const cardsRect=cards.getBoundingClientRect();const anchorRect=firstCard?firstCard.getBoundingClientRect():cardsRect;const betRect=bet.getBoundingClientRect();
         if(!seatRect.width||!anchorRect.width)return;
         const width=Math.max(1,Math.round(betRect.width||bet.offsetWidth||30));const height=Math.max(20,Math.round(betRect.height||bet.offsetHeight||20));const gap=3;
-        bet.classList.add('sivel-solo-opponent-bet-left');bet.style.left=Math.round(anchorRect.left-seatRect.left-width-gap)+'px';bet.style.top=Math.round(anchorRect.top-seatRect.top+(anchorRect.height-height)/2)+'px';
+        const left=Math.round(anchorRect.left-seatRect.left-width-gap);const top=Math.round(anchorRect.top-seatRect.top+(anchorRect.height-height)/2);
+        bet.classList.add('sivel-solo-opponent-bet-left');
+        bet.style.setProperty('left',left+'px','important');bet.style.setProperty('top',top+'px','important');
+        bet.style.setProperty('right','auto','important');bet.style.setProperty('bottom','auto','important');bet.style.setProperty('transform','none','important');
       });
     }
     function positionResult(){
-      if(!resultBox)return;const style=getComputedStyle(resultBox);if(style.display==='none'||style.visibility==='hidden'||Number(style.opacity)===0)return;
+      if(!resultBox)return;const computed=getComputedStyle(resultBox);if(computed.display==='none'||computed.visibility==='hidden'||Number(computed.opacity)===0)return;
       const stageRect=stage.getBoundingClientRect();const boardRect=board.getBoundingClientRect();const resultRect=resultBox.getBoundingClientRect();if(!stageRect.width||!boardRect.width||!resultRect.width)return;
-      resultBox.classList.add('sivel-solo-hand-result');resultBox.style.setProperty('left',Math.round(boardRect.left-stageRect.left+boardRect.width/2)+'px','important');resultBox.style.setProperty('top',Math.max(72,Math.round(boardRect.top-stageRect.top-resultRect.height-12))+'px','important');
+      resultBox.style.setProperty('left',Math.round(boardRect.left-stageRect.left+boardRect.width/2)+'px','important');
+      resultBox.style.setProperty('top',Math.max(72,Math.round(boardRect.top-stageRect.top-resultRect.height-12))+'px','important');
     }
     function sync(){
       syncQueued=false;const current=number(slider.value);const canRaise=!raiseBtn.disabled&&number(slider.max)>0;
@@ -696,7 +739,7 @@ function installSoloTableUpgrade(source) {
 })();
 </script>`;
 
-  if (!source.includes('</head>') || !source.includes('</body>')) fail('V68 solo-table upgrade could not find the solo document boundaries.');
+  if (!source.includes('</head>') || !source.includes('</body>')) fail('V69 solo-table upgrade could not find the solo document boundaries.');
   source = source.replace('</head>', style + '\n</head>');
   source = source.replace('</body>', runtime + '\n</body>');
   return source;
@@ -716,8 +759,8 @@ function cleanServerVersion(serverSource) {
 
 function buildPackage(existing) {
   const pkg = JSON.parse(existing);
-  pkg.version = '2.3.0';
-  pkg.description = 'Sivel Poker clean V57 baseline with the approved professional public-table interface carried into solo play.';
+  pkg.version = '2.3.1';
+  pkg.description = 'Sivel Poker clean V57 baseline with corrected public-matching solo results, sidebar sizing, and opponent wager placement.';
   pkg.sivelBaseline = 'V57';
   pkg.scripts = {
     start: 'node server.js',
@@ -760,7 +803,15 @@ function writeBaselineTest() {
   assert.ok(!multiplayer.includes(' · YOU'), 'Local profile must not append a YOU suffix.');
   assert.ok(multiplayer.includes('rightPanel.appendChild(betPanel)'));
   assert.ok(multiplayer.includes("stage.querySelectorAll('#seats > .seat:not(.self-seat):not(.open-seat)')"));\n  assert.doesNotMatch(multiplayer, /sivel-player-console-v60/);
-  assert.doesNotMatch(multiplayer, /sivel-pro-player-controls-runtime-v63/);\n  assert.match(multiplayer, /<\\/html>\\s*$/i);\n});\n\ntest('solo tables use the approved professional interface', () => {\n  const index = read('public/index.html');\n  assert.match(index, /${SOLO_TABLE_MARKER}/);\n  assert.ok(index.includes('sivelSoloActionZone'));\n  assert.ok(index.includes('sivel-solo-action-zone'));\n  assert.ok(index.includes('sivel-solo-sidebar-bet'));\n  assert.ok(index.includes('data-solo-size="half"'));\n  assert.ok(index.includes('data-solo-step="-1"'));\n  assert.ok(index.includes('sivel-solo-opponent-bet-left'));\n  assert.ok(index.includes('sivel-solo-hand-result'));\n  assert.ok(index.includes('sivel-solo-stats-panel'));\n  assert.ok(index.includes("history.insertAdjacentElement('afterend',stats)"));\n  assert.ok(index.includes('margin:34px auto 0!important'));\n  assert.ok(index.includes("stage.querySelectorAll('#seatsLayer > .seat')"));\n  assert.ok(index.includes("String(seat.dataset.index)==='0'"));\n  assert.ok(index.includes("cards.querySelector('.card')"));\n  assert.ok(index.includes('const gap=3'));\n  assert.ok(index.includes('scale(.875)'));\n  assert.ok(index.includes('sivelSoloAllInBtn'));\n  assert.ok(index.includes('sivel-solo-next-hand'));\n  assert.ok(!index.includes(' · YOU'), 'Solo profile must not append a YOU suffix.');\n  const runtime = index.match(/<script id="sivel-solo-professional-table-runtime-v68">([\\s\\S]*?)<\\/script>/);\n  assert.ok(runtime, 'Solo professional runtime is missing.');\n  assert.doesNotThrow(() => new vm.Script(runtime[1], { filename: 'solo-professional-v68.js' }));\n});\n\ntest('inline multiplayer scripts parse', () => {\n  const multiplayer = read('public/multiplayer.html');\n  const scripts = [...multiplayer.matchAll(/<script(?:\\s[^>]*)?>([\\s\\S]*?)<\\/script>/gi)].map(match => match[1]);\n  assert.ok(scripts.length > 0);\n  for (const [index, source] of scripts.entries()) {\n    assert.doesNotThrow(() => new vm.Script(source, { filename: 'multiplayer-inline-' + index + '.js' }));\n  }\n});\n\ntest('server contains the authoritative V57 baseline', () => {\n  const server = read('server.js');\n  assert.match(server, /clean-baseline-v57|${BASELINE_MARKER}/);\n  assert.match(server, /turnId/);\n  assert.match(server, /server/);\n});\n`;
+  assert.doesNotMatch(multiplayer, /sivel-pro-player-controls-runtime-v63/);\n  assert.match(multiplayer, /<\\/html>\\s*$/i);\n});\n\ntest('solo tables use the approved professional interface', () => {\n  const index = read('public/index.html');\n  assert.match(index, /${SOLO_TABLE_MARKER}/);\n  assert.ok(index.includes('sivelSoloActionZone'));\n  assert.ok(index.includes('sivel-solo-action-zone'));\n  assert.ok(index.includes('sivel-solo-sidebar-bet'));\n  assert.ok(index.includes('data-solo-size="half"'));\n  assert.ok(index.includes('data-solo-step="-1"'));\n  assert.ok(index.includes('sivel-solo-opponent-bet-left'));\n  assert.ok(index.includes('sivel-solo-hand-result'));
+  assert.ok(index.includes('sivel-hand-result-banner'));
+  assert.ok(index.includes('width:min(440px,calc(100% - 30px))!important'));
+  assert.ok(index.includes("stage.appendChild(resultBox)"));\n  assert.ok(index.includes('sivel-solo-stats-panel'));
+  assert.ok(index.includes("label.textContent.trim().toUpperCase()==='DIFFICULTY'"));
+  assert.ok(index.includes("levelChip.classList.add('sivel-solo-obsolete')"));\n  assert.ok(index.includes("history.insertAdjacentElement('afterend',stats)"));\n  assert.ok(index.includes('margin:34px auto 0!important'));\n  assert.ok(index.includes("stage.querySelectorAll('#seatsLayer > .seat')"));\n  assert.ok(index.includes("String(seat.dataset.index)==='0'"));\n  assert.ok(index.includes("cards.querySelector('.card')"));\n  assert.ok(index.includes('const gap=3'));
+  assert.ok(index.includes("bet.style.setProperty('left',left+'px','important')"));
+  assert.ok(index.includes("rightPanel.appendChild(betPanel)"));
+  assert.ok(index.includes('margin-top:auto!important'));\n  assert.ok(index.includes('scale(.875)'));\n  assert.ok(index.includes('sivelSoloAllInBtn'));\n  assert.ok(index.includes('sivel-solo-next-hand'));\n  assert.ok(!index.includes(' · YOU'), 'Solo profile must not append a YOU suffix.');\n  const runtime = index.match(/<script id="sivel-solo-professional-table-runtime-v69">([\\s\\S]*?)<\\/script>/);\n  assert.ok(runtime, 'Solo professional runtime is missing.');\n  assert.doesNotThrow(() => new vm.Script(runtime[1], { filename: 'solo-professional-v69.js' }));\n});\n\ntest('inline multiplayer scripts parse', () => {\n  const multiplayer = read('public/multiplayer.html');\n  const scripts = [...multiplayer.matchAll(/<script(?:\\s[^>]*)?>([\\s\\S]*?)<\\/script>/gi)].map(match => match[1]);\n  assert.ok(scripts.length > 0);\n  for (const [index, source] of scripts.entries()) {\n    assert.doesNotThrow(() => new vm.Script(source, { filename: 'multiplayer-inline-' + index + '.js' }));\n  }\n});\n\ntest('server contains the authoritative V57 baseline', () => {\n  const server = read('server.js');\n  assert.match(server, /clean-baseline-v57|${BASELINE_MARKER}/);\n  assert.match(server, /turnId/);\n  assert.match(server, /server/);\n});\n`;
   fs.mkdirSync(TEST_DIR, { recursive: true });
   writeAtomic(path.join(TEST_DIR, 'v57-baseline.test.js'), test);
 }
@@ -768,7 +819,7 @@ function writeBaselineTest() {
 function writeBaselineNotes() {
   const notes = `# Sivel Poker V57 clean baseline\n\nV57 permanently bakes the confirmed V55 server-authority work and the V56 public-seat profile stability fix into normal source files.\n\n## Structural changes\n\n- \`npm start\` now runs only \`node server.js\`.\n- The multiplayer client is a readable file at \`public/multiplayer.html\`.\n- \`public/index.html\` loads that client template instead of storing a large base64 payload.\n- V55/V56 scripts are retained under \`legacy-patches/\` for audit and rollback only.\n- \`npm test\` includes V57 regression checks.\n\n## Preserved behavior\n\n- Server-owned turn timers, hand IDs and turn IDs.\n- Strict check, call and raise validation.\n- Public-table auto play, top-ups and all-in runouts.\n- Clickable opponent profiles.\n- One stable identity card per occupied live-table seat.\n- Visible local-player profile and chip count.\n- Ghost-seat cleanup.\n- Waiting-table seats cannot survive into active hands as duplicate profiles.
 - Public live tables do not render a second player roster beside the table.\n- Fold, check/call, raise and all-in reserve a protected center lane around the local cards, chips and profile.\n- Sit out, leave-after-hand, top-up and host controls are stacked directly beneath Hand History in the left sidebar.\n- Raise sizing is fully redesigned as presets plus minus/plus stepping in the right sidebar; the range slider is hidden.\n- The table, center logo and community board retain their approved positions.\n- The pot sits beneath the community cards with enough clearance to leave the table branding readable.\n- Opponent wager and blind chips are anchored three pixels from the first rendered card, without overlap.\n- Hand winners and fold results appear in the protected lane immediately above the community cards at the final approved reduced size.
-- The local player profile displays the normal player name without an added YOU suffix.\n- Solo tables use the same approved compact action layout, protected center lane, board/pot spacing, result banner and opponent wager positioning as public tables.\n- Solo raise sizing uses presets plus minus/plus stepping in the right sidebar, while Next Hand remains available there.\n- Online-only chat, room codes, sit-out, leave-after-hand and top-up controls are not added to solo play.\n\n## Next development rule\n\nEdit \`server.js\`, \`public/index.html\` and \`public/multiplayer.html\` directly. Do not add another startup patch script.\n`;
+- The local player profile displays the normal player name without an added YOU suffix.\n- Solo tables use the same approved compact action layout, protected center lane, board/pot spacing and exact winner/fold banner as public tables.\n- Solo opponent wagers are anchored three pixels from the first visible card using forced final coordinates.\n- Solo raise sizing uses presets plus minus/plus stepping at the bottom of the right sidebar, while Next Hand remains available there.\n- The duplicate lower-left difficulty tile and obsolete game-header level tile are hidden without removing their backing state nodes.\n- Online-only chat, room codes, sit-out, leave-after-hand and top-up controls are not added to solo play.\n\n## Next development rule\n\nEdit \`server.js\`, \`public/index.html\` and \`public/multiplayer.html\` directly. Do not add another startup patch script.\n`;
   writeAtomic(path.join(ROOT, 'V57_BASELINE.md'), notes);
 }
 
@@ -802,7 +853,7 @@ function main() {
   requireFile(PACKAGE_PATH);
 
   if (read(INDEX_PATH).includes(BASELINE_MARKER) && fs.existsSync(MULTIPLAYER_PATH)) {
-    console.log('V57 clean baseline is already installed; applying the V68 professional solo-table upgrade and verifying it now.');
+    console.log('V57 clean baseline is already installed; applying the V69 solo-table parity corrections and verifying it now.');
     const existingIndex = read(INDEX_PATH);
     const upgradedIndex = installSoloTableUpgrade(existingIndex);
     if (upgradedIndex !== existingIndex) writeAtomic(INDEX_PATH, upgradedIndex);
