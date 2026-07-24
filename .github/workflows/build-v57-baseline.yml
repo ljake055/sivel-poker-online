@@ -1,1 +1,42 @@
+name: Build clean V57 baseline
 
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - 'Sivel_Poker_Online/migrate-clean-v57.js'
+      - '.github/workflows/build-v57-baseline.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  build-v57:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out current project
+        uses: actions/checkout@v4
+
+      - name: Use Node.js 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Build clean V57 source
+        working-directory: Sivel_Poker_Online
+        run: node migrate-clean-v57.js
+
+      - name: Run V57 regression checks
+        working-directory: Sivel_Poker_Online
+        run: npm test
+
+      - name: Publish generated V57 branch
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git checkout -B v57-clean-baseline
+          git add -A -- Sivel_Poker_Online
+          git diff --cached --quiet && exit 0
+          git commit -m "Build clean V57 baseline"
+          git push --force origin v57-clean-baseline
