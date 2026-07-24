@@ -17,7 +17,7 @@ const BASELINE_MARKER = 'SIVEL_CLEAN_BASELINE_V57';
 const MULTIPLAYER_MARKER = 'SIVEL_CLEAN_MULTIPLAYER_V57';
 const SEAT_OWNERSHIP_MARKER = 'SIVEL_V57_SEAT_ROOT_OWNERSHIP_FIX';
 const PUBLIC_ROSTER_MARKER = 'SIVEL_V57_PUBLIC_ROSTER_DUPLICATE_FIX';
-const ACTION_DOCK_MARKER = 'SIVEL_V57_PRO_PLAYER_CONTROLS_V61';
+const ACTION_DOCK_MARKER = 'SIVEL_V57_PRO_PLAYER_CONTROLS_V62';
 
 function fail(message) {
   throw new Error(message);
@@ -186,30 +186,29 @@ function installMultiplayerActionDock(source) {
     /\n*<style id="sivel-in-table-action-dock-v58">[\s\S]*?<\/style>/g,
     /\n*<style id="sivel-split-table-controls-v59">[\s\S]*?<\/style>/g,
     /\n*<style id="sivel-player-console-v60">[\s\S]*?<\/style>/g,
-    /\n*<style id="sivel-pro-player-controls-v61">[\s\S]*?<\/style>/g
+    /\n*<style id="sivel-pro-player-controls-v62">[\s\S]*?<\/style>/g
   ];
   const runtimePatterns = [
     /\n*<script id="sivel-in-table-action-dock-runtime-v58">[\s\S]*?<\/script>/g,
     /\n*<script id="sivel-split-table-controls-runtime-v59">[\s\S]*?<\/script>/g,
     /\n*<script id="sivel-player-console-runtime-v60">[\s\S]*?<\/script>/g,
-    /\n*<script id="sivel-pro-player-controls-runtime-v61">[\s\S]*?<\/script>/g
+    /\n*<script id="sivel-pro-player-controls-runtime-v62">[\s\S]*?<\/script>/g
   ];
   for (const pattern of stylePatterns.concat(runtimePatterns)) source = source.replace(pattern, '');
 
   if (!source.includes('window.SivelGetTableState=()=>state;')) {
     const stateMatches = [...source.matchAll(/let\s+state\s*=\s*[^;]+;/g)];
-    if (stateMatches.length !== 1) fail(`V61 professional controls expected one multiplayer state declaration, found ${stateMatches.length}.`);
+    if (stateMatches.length !== 1) fail(`V62 professional controls expected one multiplayer state declaration, found ${stateMatches.length}.`);
     source = source.replace(/let\s+state\s*=\s*[^;]+;/, match => `${match}\nwindow.SivelGetTableState=()=>state;`);
   }
 
   const style = `
-<style id="sivel-pro-player-controls-v61">
-/* ${ACTION_DOCK_MARKER} — compact professional controls protect the cards, profile, board and table branding. */
+<style id="sivel-pro-player-controls-v62">
+/* ${ACTION_DOCK_MARKER} — refined professional controls keep utilities off the table, tighten action spacing, and move raise controls into a compact center pod. */
 #gameScreen.sivel-action-dock-screen{min-height:0}
 #gameScreen.sivel-action-dock-screen .table-wrap{position:relative;min-height:0}
 .controls.sivel-controls-relocated{display:none!important}
 
-/* Keep the original casino-table geometry and board position. */
 #tableStage.sivel-action-console-active .poker-table.sivel-casino-table{
   left:5.8%!important;right:5.8%!important;top:20.5%!important;bottom:10.5%!important
 }
@@ -222,17 +221,15 @@ function installMultiplayerActionDock(source) {
 #tableStage.sivel-action-console-active .center .board{order:1;margin:0!important;transform:none!important}
 #tableStage.sivel-action-console-active .center .pot{
   order:2;position:relative!important;left:auto!important;right:auto!important;top:auto!important;bottom:auto!important;
-  display:inline-flex!important;margin:24px auto 0!important;transform:scale(.66)!important;transform-origin:top center!important;
+  display:inline-flex!important;margin:34px auto 0!important;transform:scale(.62)!important;transform-origin:top center!important;
   z-index:14!important;white-space:nowrap!important;pointer-events:none!important
 }
-#tableStage.sivel-action-console-active .center>.sivel-table-status-spacer{
-  position:absolute!important;visibility:hidden!important;pointer-events:none!important
-}
-#tableStage.sivel-action-console-active .seat.self-seat{bottom:10px!important;z-index:96!important}
+#tableStage.sivel-action-console-active .center>.sivel-table-status-spacer{position:absolute!important;visibility:hidden!important;pointer-events:none!important}
+#tableStage.sivel-action-console-active .seat.self-seat{bottom:8px!important;z-index:96!important}
 #tableStage.sivel-action-console-active .seat.slot-lower-left,
-#tableStage.sivel-action-console-active .seat.slot-lower-right{bottom:170px!important}
+#tableStage.sivel-action-console-active .seat.slot-lower-right{bottom:162px!important}
 
-.sivel-player-console{position:absolute;inset:0;z-index:90;pointer-events:none;--sivel-inner-offset:calc(50% - 380px)}
+.sivel-player-console{position:absolute;inset:0;z-index:90;pointer-events:none;--sivel-left-near:calc(50% - 228px);--sivel-left-far:calc(50% - 332px);--sivel-right-near:calc(50% + 84px);--sivel-right-far:calc(50% + 228px)}
 .sivel-action-orbit{position:absolute;inset:0;pointer-events:none}
 .sivel-action-orbit .action-btn{
   position:absolute!important;z-index:4;min-width:0!important;padding:6px 10px!important;pointer-events:auto!important;
@@ -241,19 +238,19 @@ function installMultiplayerActionDock(source) {
   transition:transform .14s ease,filter .14s ease,border-color .14s ease!important
 }
 .sivel-action-orbit #foldBtn{
-  left:18px;bottom:18px;width:112px!important;height:44px!important;border-radius:20px 11px 24px 24px!important;
+  left:var(--sivel-left-far);bottom:24px;width:108px!important;height:42px!important;border-radius:20px 11px 24px 24px!important;
   background:linear-gradient(180deg,#51232d,#281017)!important;border:1px solid #884452!important;color:#ffd0d6!important
 }
 .sivel-action-orbit #callBtn{
-  left:var(--sivel-inner-offset);bottom:40px;width:130px!important;height:49px!important;border-radius:26px 16px 16px 26px!important;
+  left:var(--sivel-left-near);bottom:52px;width:124px!important;height:47px!important;border-radius:26px 16px 16px 26px!important;
   background:linear-gradient(180deg,#205840,#0c2a1f)!important;border:1px solid #3d936b!important;color:#cbffe0!important
 }
 .sivel-action-orbit #raiseBtn{
-  right:var(--sivel-inner-offset);bottom:40px;width:148px!important;height:49px!important;border-radius:16px 26px 26px 16px!important;
+  left:var(--sivel-right-near);bottom:52px;width:138px!important;height:47px!important;border-radius:16px 26px 26px 16px!important;
   background:linear-gradient(180deg,#f1d88d,#c58a2d 65%,#965f1b)!important;border:1px solid #f0ce77!important;color:#221503!important
 }
 .sivel-action-orbit .sivel-all-in{
-  right:18px;bottom:18px;width:112px!important;height:44px!important;border-radius:11px 20px 24px 24px!important;
+  left:var(--sivel-right-far);bottom:24px;width:108px!important;height:42px!important;border-radius:11px 20px 24px 24px!important;
   background:linear-gradient(180deg,#dc622e,#761911 72%,#470d09)!important;border:1px solid #ee9548!important;color:#fff1da!important
 }
 .sivel-action-orbit #foldBtn:hover:not(:disabled),
@@ -262,52 +259,36 @@ function installMultiplayerActionDock(source) {
 .sivel-action-orbit .sivel-all-in:hover:not(:disabled){transform:translateY(-3px)!important;filter:brightness(1.08)!important}
 .sivel-action-orbit .action-btn:disabled{opacity:.31!important;filter:saturate(.42)!important;cursor:not-allowed!important}
 
-/* Standard poker-client sizing rail: always visible, compact, and entirely outside the protected card/profile column. */
-.sivel-bet-rail{
-  position:absolute;right:16px;bottom:80px;z-index:6;width:310px;padding:6px 7px;border-radius:16px 16px 7px 16px;
+.sivel-bet-pod{
+  position:absolute;left:50%;bottom:118px;transform:translateX(-50%);z-index:6;width:292px;padding:6px 8px;border-radius:17px;
   border:1px solid rgba(83,113,135,.58);background:linear-gradient(180deg,rgba(14,27,38,.98),rgba(5,12,18,.99));
   box-shadow:0 12px 28px rgba(0,0,0,.54),inset 0 1px 0 rgba(255,255,255,.065);pointer-events:auto
 }
 .sivel-quick-bets{display:grid;grid-template-columns:repeat(4,1fr);gap:4px;margin-bottom:5px}
-.sivel-quick-bet{
-  height:23px;min-width:0;padding:0 4px;border-radius:999px;border:1px solid rgba(83,111,131,.55);
-  background:linear-gradient(180deg,#172a38,#0b1822);color:#bdccd6;font-size:7px;font-weight:950;letter-spacing:.07em;cursor:pointer
-}
+.sivel-quick-bet{height:21px;min-width:0;padding:0 4px;border-radius:999px;border:1px solid rgba(83,111,131,.55);background:linear-gradient(180deg,#172a38,#0b1822);color:#bdccd6;font-size:7px;font-weight:950;letter-spacing:.07em;cursor:pointer}
 .sivel-quick-bet:hover:not(:disabled){border-color:#dfbd62;color:#ffe4a0;filter:brightness(1.09)}
 .sivel-quick-bet:disabled{opacity:.28;cursor:not-allowed}
-.sivel-bet-rail .raise-box{
-  display:grid!important;grid-template-columns:minmax(0,1fr) 66px!important;gap:8px!important;align-items:center!important;
-  width:100%!important;min-height:27px!important;padding:2px 5px!important;margin:0!important;border:0!important;border-radius:9px!important;
-  background:rgba(3,10,16,.48)!important;box-shadow:none!important
-}
-.sivel-bet-rail .raise-box input[type="range"]{width:100%;margin:0!important;align-self:center}
-.sivel-bet-rail .raise-total{min-width:0!important;display:flex!important;flex-direction:column!important;align-items:center!important;justify-content:center!important;line-height:1!important}
-.sivel-bet-rail .raise-total small{font-size:6px!important;color:#788d9d!important}
-.sivel-bet-rail .raise-total strong{font-size:13px!important;color:#f2d17c!important}
+.sivel-bet-pod .raise-box{display:grid!important;grid-template-columns:minmax(0,1fr) 68px!important;gap:8px!important;align-items:center!important;width:100%!important;min-height:27px!important;padding:3px 6px!important;margin:0!important;border:0!important;border-radius:9px!important;background:rgba(3,10,16,.48)!important;box-shadow:none!important}
+.sivel-bet-pod .raise-box input[type="range"]{width:100%;margin:0!important;align-self:center}
+.sivel-bet-pod .raise-total{min-width:0!important;display:flex!important;flex-direction:column!important;align-items:center!important;justify-content:center!important;line-height:1!important}
+.sivel-bet-pod .raise-total small{font-size:6px!important;color:#788d9d!important}
+.sivel-bet-pod .raise-total strong{font-size:13px!important;color:#f2d17c!important}
 
-/* Table utilities live in unused top-left room space, never under chat and never in a scrolling panel. */
 .sivel-table-utility-rail{
-  position:absolute;left:210px;top:16px;z-index:93;display:flex;align-items:center;gap:5px;padding:5px;border-radius:13px;
+  position:absolute;left:12px;top:108px;z-index:93;display:grid;grid-template-columns:1fr;gap:6px;width:158px;padding:7px;border-radius:14px;
   border:1px solid rgba(72,98,117,.58);background:linear-gradient(180deg,rgba(15,29,41,.97),rgba(5,13,20,.98));
   box-shadow:0 10px 24px rgba(0,0,0,.48),inset 0 1px 0 rgba(255,255,255,.06);pointer-events:auto
 }
-.sivel-table-utility-rail .table-tools{display:flex!important;align-items:center!important;gap:5px!important;margin:0!important;padding:0!important;border:0!important}
+.sivel-table-utility-rail .table-tools{display:grid!important;grid-template-columns:1fr!important;gap:6px!important;margin:0!important;padding:0!important;border:0!important;width:100%!important}
 .sivel-table-utility-rail .table-tools-label{display:none!important}
-.sivel-table-utility-rail .table-tool{
-  min-width:84px!important;height:34px!important;padding:0 9px!important;border-radius:10px!important;font-size:8px!important;white-space:nowrap!important
-}
-.sivel-table-utility-rail .host-row{display:flex!important;margin:0!important}
-.sivel-table-utility-rail .host-row button{min-width:105px!important;height:34px!important;padding:0 9px!important;border-radius:10px!important;font-size:8px!important}
+.sivel-table-utility-rail .table-tool,.sivel-table-utility-rail .host-row button{width:100%!important;min-width:0!important;height:34px!important;padding:0 10px!important;border-radius:10px!important;font-size:8px!important;white-space:nowrap!important}
+.sivel-table-utility-rail .host-row{display:grid!important;grid-template-columns:1fr!important;gap:6px!important;margin:0!important;width:100%!important}
 
-.sivel-table-status-panel{
-  margin-top:10px;padding:9px 10px;border-radius:12px;border:1px solid rgba(77,111,138,.42);
-  background:linear-gradient(180deg,rgba(11,24,35,.96),rgba(5,13,20,.98));box-shadow:inset 0 1px 0 rgba(255,255,255,.04)
-}
+.sivel-table-status-panel{margin-top:10px;padding:9px 10px;border-radius:12px;border:1px solid rgba(77,111,138,.42);background:linear-gradient(180deg,rgba(11,24,35,.96),rgba(5,13,20,.98));box-shadow:inset 0 1px 0 rgba(255,255,255,.04)}
 .sivel-table-status-panel small{display:block;font-size:7px;font-weight:950;letter-spacing:.16em;color:#71899c;margin-bottom:4px}
 .sivel-table-status-panel strong{display:block;color:#c7d6e0;font-size:10px;line-height:1.35}
 .sivel-player-console #gameStatus{display:none!important}
-.sivel-player-console.sivel-console-waiting .sivel-action-orbit,
-.sivel-player-console.sivel-console-waiting .sivel-bet-rail{display:none!important}
+.sivel-player-console.sivel-console-waiting .sivel-action-orbit,.sivel-player-console.sivel-console-waiting .sivel-bet-pod{display:none!important}
 .sivel-player-console.sivel-console-waiting #gameStatus{
   display:flex!important;position:absolute!important;left:50%!important;top:50%!important;right:auto!important;bottom:auto!important;
   transform:translate(-50%,-50%)!important;width:min(520px,calc(100% - 30px))!important;min-height:42px!important;
@@ -316,15 +297,12 @@ function installMultiplayerActionDock(source) {
   font-size:12px!important;line-height:1.4!important;text-align:center!important;pointer-events:none!important
 }
 
-/* The center table column can be narrower than the browser due to surrounding panels. */
-.sivel-player-console.sivel-console-narrow{--sivel-inner-offset:14%}
+.sivel-player-console.sivel-console-narrow{--sivel-left-near:calc(50% - 208px);--sivel-left-far:calc(50% - 304px);--sivel-right-near:calc(50% + 74px);--sivel-right-far:calc(50% + 206px)}
 .sivel-player-console.sivel-console-narrow .sivel-action-orbit .action-btn{font-size:9px!important}
-.sivel-player-console.sivel-console-narrow .sivel-action-orbit #foldBtn,
-.sivel-player-console.sivel-console-narrow .sivel-action-orbit .sivel-all-in{width:98px!important}
-.sivel-player-console.sivel-console-narrow .sivel-action-orbit #callBtn{width:112px!important}
-.sivel-player-console.sivel-console-narrow .sivel-action-orbit #raiseBtn{width:126px!important}
-.sivel-player-console.sivel-console-narrow .sivel-bet-rail{width:275px}
-.sivel-player-console.sivel-console-narrow .sivel-table-utility-rail{left:190px}
+.sivel-player-console.sivel-console-narrow .sivel-action-orbit #foldBtn,.sivel-player-console.sivel-console-narrow .sivel-all-in{width:96px!important}
+.sivel-player-console.sivel-console-narrow .sivel-action-orbit #callBtn{width:116px!important}
+.sivel-player-console.sivel-console-narrow .sivel-action-orbit #raiseBtn{width:128px!important}
+.sivel-player-console.sivel-console-narrow .sivel-bet-pod{width:274px}
 
 @media(min-width:1181px){
   #gameScreen.sivel-action-dock-screen{height:100vh;overflow:hidden}
@@ -335,44 +313,46 @@ function installMultiplayerActionDock(source) {
   #gameScreen.sivel-action-dock-screen #tableStage{height:100%!important;min-height:590px;flex:1 1 auto;width:100%}
   #gameScreen.sivel-action-dock-screen .side-panel{height:100%;min-height:0!important}
 }
-@media(max-width:1050px) and (min-width:761px){
-  .sivel-player-console{--sivel-inner-offset:13%}
-  .sivel-table-utility-rail{left:12px;top:92px;display:grid;grid-template-columns:1fr;width:138px}
-  .sivel-table-utility-rail .table-tools{display:grid!important;grid-template-columns:1fr!important;width:100%}
-  .sivel-table-utility-rail .table-tool,.sivel-table-utility-rail .host-row button{width:100%!important;min-width:0!important}
-  .sivel-bet-rail{width:270px}
+@media(max-width:1120px) and (min-width:761px){
+  .sivel-table-utility-rail{left:8px;top:104px;width:144px}
+  .sivel-bet-pod{width:270px;bottom:122px}
   #tableStage.sivel-action-console-active .seat.slot-lower-left,
   #tableStage.sivel-action-console-active .seat.slot-lower-right{bottom:150px!important}
+}
+@media(max-width:900px) and (min-width:761px){
+  .sivel-player-console{--sivel-left-near:calc(50% - 188px);--sivel-left-far:calc(50% - 280px);--sivel-right-near:calc(50% + 66px);--sivel-right-far:calc(50% + 188px)}
+  .sivel-bet-pod{width:252px;bottom:125px}
+  #tableStage.sivel-action-console-active .seat.self-seat{bottom:132px!important}
+  #tableStage.sivel-action-console-active .seat.slot-lower-left,
+  #tableStage.sivel-action-console-active .seat.slot-lower-right{bottom:210px!important}
 }
 @media(max-width:760px){
   #tableStage.sivel-action-console-active .center{top:49%!important;width:88%!important}
   #tableStage.sivel-action-console-active .center:before{height:28px;flex-basis:28px}
-  #tableStage.sivel-action-console-active .center .pot{margin-top:17px!important;transform:scale(.62)!important}
-  #tableStage.sivel-action-console-active .seat.self-seat{bottom:151px!important}
+  #tableStage.sivel-action-console-active .center .pot{margin-top:19px!important;transform:scale(.6)!important}
+  #tableStage.sivel-action-console-active .seat.self-seat{bottom:176px!important}
   #tableStage.sivel-action-console-active .seat.slot-lower-left,
-  #tableStage.sivel-action-console-active .seat.slot-lower-right{bottom:220px!important}
-  .sivel-action-orbit{left:7px;right:7px;bottom:7px;top:auto;height:48px;display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:5px}
+  #tableStage.sivel-action-console-active .seat.slot-lower-right{bottom:240px!important}
+  .sivel-action-orbit{left:8px;right:8px;bottom:8px;top:auto;height:88px;display:grid;grid-template-columns:repeat(2,minmax(0,1fr));grid-template-rows:repeat(2,40px);gap:5px}
   .sivel-action-orbit .action-btn,
   .sivel-action-orbit #foldBtn,.sivel-action-orbit #callBtn,.sivel-action-orbit #raiseBtn,.sivel-action-orbit .sivel-all-in{
     position:relative!important;inset:auto!important;bottom:auto!important;right:auto!important;left:auto!important;transform:none!important;
-    width:auto!important;height:44px!important;border-radius:12px!important;font-size:8px!important
+    width:auto!important;height:40px!important;border-radius:12px!important;font-size:8px!important
   }
-  .sivel-bet-rail{left:7px;right:7px;bottom:60px;width:auto}
+  .sivel-bet-pod{left:8px;right:8px;bottom:100px;transform:none;width:auto}
   .sivel-table-utility-rail{display:none!important}
 }
 @media(max-width:620px){
-  #tableStage.sivel-action-console-active .seat.self-seat{bottom:193px!important}
+  #tableStage.sivel-action-console-active .seat.self-seat{bottom:204px!important}
   #tableStage.sivel-action-console-active .seat.slot-lower-left,
-  #tableStage.sivel-action-console-active .seat.slot-lower-right{bottom:258px!important}
-  .sivel-action-orbit{height:88px;grid-template-columns:repeat(2,1fr);grid-template-rows:repeat(2,40px)}
-  .sivel-action-orbit .action-btn,
-  .sivel-action-orbit #foldBtn,.sivel-action-orbit #callBtn,.sivel-action-orbit #raiseBtn,.sivel-action-orbit .sivel-all-in{height:40px!important}
-  .sivel-bet-rail{bottom:102px}
+  #tableStage.sivel-action-console-active .seat.slot-lower-right{bottom:268px!important}
+  .sivel-bet-pod{bottom:114px}
 }
-</style>`;
+</style>
+`;
 
   const runtime = `
-<script id="sivel-pro-player-controls-runtime-v61">
+<script id="sivel-pro-player-controls-runtime-v62">
 (function(){
   'use strict';
   function initSivelActionDock(){
@@ -394,7 +374,7 @@ function installMultiplayerActionDock(source) {
     consoleRoot.id='sivelActionDock';
     consoleRoot.className='sivel-player-console sivel-console-waiting';
     consoleRoot.setAttribute('aria-label','Poker action controls');
-    consoleRoot.innerHTML='<div class="sivel-action-orbit"></div><div class="sivel-bet-rail"><div class="sivel-quick-bets"><button type="button" class="sivel-quick-bet" data-size="min">MIN</button><button type="button" class="sivel-quick-bet" data-size="half">½ POT</button><button type="button" class="sivel-quick-bet" data-size="pot">POT</button><button type="button" class="sivel-quick-bet" data-size="max">MAX</button></div></div><div class="sivel-table-utility-rail"></div>';
+    consoleRoot.innerHTML='<div class="sivel-action-orbit"></div><div class="sivel-bet-pod"><div class="sivel-quick-bets"><button type="button" class="sivel-quick-bet" data-size="min">MIN</button><button type="button" class="sivel-quick-bet" data-size="half">½ POT</button><button type="button" class="sivel-quick-bet" data-size="pot">POT</button><button type="button" class="sivel-quick-bet" data-size="max">MAX</button></div></div><div class="sivel-table-utility-rail"></div>';
     consoleRoot.appendChild(status);
 
     const orbit=consoleRoot.querySelector('.sivel-action-orbit');
@@ -409,9 +389,9 @@ function installMultiplayerActionDock(source) {
     allIn.textContent='All-In';
     orbit.appendChild(allIn);
 
-    const betRail=consoleRoot.querySelector('.sivel-bet-rail');
-    betRail.appendChild(raiseBox);
-    const quickButtons=Array.from(betRail.querySelectorAll('[data-size]'));
+    const betPod=consoleRoot.querySelector('.sivel-bet-pod');
+    betPod.appendChild(raiseBox);
+    const quickButtons=Array.from(betPod.querySelectorAll('[data-size]'));
 
     const utilityRail=consoleRoot.querySelector('.sivel-table-utility-rail');
     const tableTools=document.getElementById('tableTools');
@@ -442,7 +422,7 @@ function installMultiplayerActionDock(source) {
     function number(value){const parsed=Number(value);return Number.isFinite(parsed)?parsed:0}
     function limits(data){
       const legal=data&&data.legal||{};
-      return{min:number(legal.minRaiseTotal||slider.min),max:number(legal.maxRaiseTotal||slider.max)};
+      return {min:number(legal.minRaiseTotal||slider.min),max:number(legal.maxRaiseTotal||slider.max)};
     }
     function setRaiseTarget(value){
       const data=tableState(),range=limits(data);
@@ -483,7 +463,7 @@ function installMultiplayerActionDock(source) {
       (window.requestAnimationFrame||setTimeout)(sync);
     }
 
-    betRail.addEventListener('click',function(event){
+    betPod.addEventListener('click',function(event){
       const button=event.target&&event.target.closest?event.target.closest('[data-size]'):null;
       if(!button||button.disabled)return;
       setRaiseTarget(sizingTarget(button.dataset.size));
@@ -504,10 +484,11 @@ function installMultiplayerActionDock(source) {
   if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',initSivelActionDock,{once:true});
   else initSivelActionDock();
 })();
-</script>`;
+</script>
+`;
 
   if (!source.includes('</head>') || !source.includes('</body>')) {
-    fail('V61 professional controls could not find the multiplayer document boundaries.');
+    fail('V62 professional controls could not find the multiplayer document boundaries.');
   }
   source = source.replace('</head>', style + '\n</head>');
   source = source.replace('</body>', runtime + '\n</body>');
@@ -528,7 +509,7 @@ function cleanServerVersion(serverSource) {
 
 function buildPackage(existing) {
   const pkg = JSON.parse(existing);
-  pkg.version = '2.2.3';
+  pkg.version = '2.2.4';
   pkg.description = 'Sivel Poker clean V57 baseline with compact professional player controls.';
   pkg.sivelBaseline = 'V57';
   pkg.scripts = {
@@ -555,7 +536,7 @@ function writeBaselineTest() {
   const test = `'use strict';\n\nconst test = require('node:test');\nconst assert = require('node:assert/strict');\nconst fs = require('node:fs');\nconst path = require('node:path');\nconst vm = require('node:vm');\n\nconst ROOT = path.resolve(__dirname, '..');\nconst read = relative => fs.readFileSync(path.join(ROOT, relative), 'utf8');\n\ntest('V57 starts the server without runtime patch scripts', () => {\n  const pkg = JSON.parse(read('package.json'));\n  assert.equal(pkg.sivelBaseline, 'V57');\n  assert.equal(pkg.scripts.start, 'node server.js');\n  assert.doesNotMatch(pkg.scripts.start, /apply-|patch/i);\n});\n\ntest('multiplayer client is external and readable', () => {\n  const index = read('public/index.html');\n  const multiplayer = read('public/multiplayer.html');\n  assert.match(index, /${BASELINE_MARKER}/);\n  assert.match(index, /multiplayerTemplatePromise/);\n  assert.doesNotMatch(index, /const encoded='/);\n  assert.doesNotMatch(index, /atob\\(encoded\\)/);\n  assert.match(multiplayer, /${MULTIPLAYER_MARKER}/);\n  assert.match(multiplayer, /SIVEL_SERVER_AUTHORITY_CLIENT_V55/);\n  assert.match(multiplayer, /SIVEL_PUBLIC_SEAT_PROFILE_STABILITY_V56/);\n  assert.match(multiplayer, /SIVEL_V57_SEAT_ROOT_OWNERSHIP_FIX/);\n  assert.ok(multiplayer.includes('!ownedRoots.has(node)'));\n  assert.ok(multiplayer.includes('sivelStableSeatNodes.clear()'));\n  assert.ok(multiplayer.includes('data-player-index=\"\${originalIndex}\"'));
   assert.match(multiplayer, /SIVEL_V57_PUBLIC_ROSTER_DUPLICATE_FIX/);
   assert.ok(multiplayer.includes("$('gamePlayers').innerHTML=state.isPublic?'':activePlayerRows+publicSideInviteRows(activeOpenSeats)"));
-  assert.ok(multiplayer.includes("classList.toggle('sivel-public-live',!!(state&&state.isPublic))"));\n  assert.match(multiplayer, /${ACTION_DOCK_MARKER}/);\n  assert.ok(multiplayer.includes("consoleRoot.id='sivelActionDock'"));\n  assert.ok(multiplayer.includes('sivelAllInBtn'));\n  assert.ok(multiplayer.includes('data-size=\"half\"'));\n  assert.ok(multiplayer.includes('sivel-player-console'));\n  assert.ok(multiplayer.includes('sivel-bet-rail'));\n  assert.ok(multiplayer.includes('sivel-table-utility-rail'));\n  assert.ok(multiplayer.includes('margin:24px auto 0!important'));\n  assert.doesNotMatch(multiplayer, /sivel-player-console-v60/);\n  assert.match(multiplayer, /<\\/html>\\s*$/i);\n});\n\ntest('inline multiplayer scripts parse', () => {\n  const multiplayer = read('public/multiplayer.html');\n  const scripts = [...multiplayer.matchAll(/<script(?:\\s[^>]*)?>([\\s\\S]*?)<\\/script>/gi)].map(match => match[1]);\n  assert.ok(scripts.length > 0);\n  for (const [index, source] of scripts.entries()) {\n    assert.doesNotThrow(() => new vm.Script(source, { filename: 'multiplayer-inline-' + index + '.js' }));\n  }\n});\n\ntest('server contains the authoritative V57 baseline', () => {\n  const server = read('server.js');\n  assert.match(server, /clean-baseline-v57|${BASELINE_MARKER}/);\n  assert.match(server, /turnId/);\n  assert.match(server, /server/);\n});\n`;
+  assert.ok(multiplayer.includes("classList.toggle('sivel-public-live',!!(state&&state.isPublic))"));\n  assert.match(multiplayer, /${ACTION_DOCK_MARKER}/);\n  assert.ok(multiplayer.includes("consoleRoot.id='sivelActionDock'"));\n  assert.ok(multiplayer.includes('sivelAllInBtn'));\n  assert.ok(multiplayer.includes('data-size=\"half\"'));\n  assert.ok(multiplayer.includes('sivel-player-console'));\n  assert.ok(multiplayer.includes('sivel-bet-pod'));\n  assert.ok(multiplayer.includes('sivel-table-utility-rail'));\n  assert.ok(multiplayer.includes('margin:34px auto 0!important'));\n  assert.doesNotMatch(multiplayer, /sivel-player-console-v60/);\n  assert.match(multiplayer, /<\\/html>\\s*$/i);\n});\n\ntest('inline multiplayer scripts parse', () => {\n  const multiplayer = read('public/multiplayer.html');\n  const scripts = [...multiplayer.matchAll(/<script(?:\\s[^>]*)?>([\\s\\S]*?)<\\/script>/gi)].map(match => match[1]);\n  assert.ok(scripts.length > 0);\n  for (const [index, source] of scripts.entries()) {\n    assert.doesNotThrow(() => new vm.Script(source, { filename: 'multiplayer-inline-' + index + '.js' }));\n  }\n});\n\ntest('server contains the authoritative V57 baseline', () => {\n  const server = read('server.js');\n  assert.match(server, /clean-baseline-v57|${BASELINE_MARKER}/);\n  assert.match(server, /turnId/);\n  assert.match(server, /server/);\n});\n`;
   fs.mkdirSync(TEST_DIR, { recursive: true });
   writeAtomic(path.join(TEST_DIR, 'v57-baseline.test.js'), test);
 }
@@ -596,7 +577,7 @@ function main() {
   requireFile(PACKAGE_PATH);
 
   if (read(INDEX_PATH).includes(BASELINE_MARKER) && fs.existsSync(MULTIPLAYER_PATH)) {
-    console.log('V57 clean baseline is already installed; applying the V61 professional player controls and verifying them now.');
+    console.log('V57 clean baseline is already installed; applying the V62 professional player controls and verifying them now.');
     const existingMultiplayer = read(MULTIPLAYER_PATH);
     const upgradedMultiplayer = installMultiplayerActionDock(existingMultiplayer);
     if (upgradedMultiplayer !== existingMultiplayer) writeAtomic(MULTIPLAYER_PATH, upgradedMultiplayer);
